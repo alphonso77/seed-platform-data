@@ -3,5 +3,6 @@ dist/
 .env
 *.log
 .seed-cache/
+simulation-runs/
 frontend/dist/
 frontend/node_modules/

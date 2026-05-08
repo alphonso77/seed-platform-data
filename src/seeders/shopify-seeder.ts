@@ -109,38 +109,56 @@ export class ShopifySeeder extends BaseSeeder {
 
     // Create customers
     const customerIds: number[] = [];
+    let phoneRetries = 0;
     for (const contact of contacts) {
-      try {
-        const response = await client.post({
-          path: 'customers',
-          data: {
-            customer: {
-              first_name: contact.firstName,
-              last_name: contact.lastName,
-              email: contact.email,
-              phone: contact.phone,
-              addresses: [
-                {
-                  address1: contact.address.street,
-                  city: contact.address.city,
-                  province: contact.address.state,
-                  zip: contact.address.zip,
-                  country: contact.address.country,
-                  first_name: contact.firstName,
-                  last_name: contact.lastName,
-                },
-              ],
-              tags: `${SEEDED_TAG},${SEEDED_AT_TAG}:${seededAt}`,
-              note: `Seeded test data — ${seededAt}`,
-            },
+      const baseCustomer = {
+        first_name: contact.firstName,
+        last_name: contact.lastName,
+        email: contact.email,
+        addresses: [
+          {
+            address1: contact.address.street,
+            city: contact.address.city,
+            province: contact.address.state,
+            zip: contact.address.zip,
+            country: contact.address.country,
+            first_name: contact.firstName,
+            last_name: contact.lastName,
           },
+        ],
+        tags: `${SEEDED_TAG},${SEEDED_AT_TAG}:${seededAt}`,
+        note: `Seeded test data — ${seededAt}`,
+      };
+      const postCustomer = (includePhone: boolean) =>
+        client.post({
+          path: 'customers',
+          data: { customer: includePhone ? { ...baseCustomer, phone: contact.phone } : baseCustomer },
         });
+
+      try {
+        const response = await postCustomer(true);
         const customer = (response.body as Record<string, Record<string, unknown>>).customer;
         customerIds.push(customer.id as number);
         created.contacts++;
       } catch (error) {
-        errors.push(`Customer ${contact.email}: ${error instanceof Error ? error.message : String(error)}`);
+        const message = error instanceof Error ? error.message : String(error);
+        if (isPhoneInvalidError(message) && contact.email) {
+          try {
+            const response = await postCustomer(false);
+            const customer = (response.body as Record<string, Record<string, unknown>>).customer;
+            customerIds.push(customer.id as number);
+            created.contacts++;
+            phoneRetries++;
+          } catch (retryError) {
+            errors.push(`Customer ${contact.email}: ${retryError instanceof Error ? retryError.message : String(retryError)}`);
+          }
+        } else {
+          errors.push(`Customer ${contact.email}: ${message}`);
+        }
       }
+    }
+    if (phoneRetries > 0) {
+      logger.info(`[Shopify] ${phoneRetries}/${contacts.length} customers had phone rejected, retried without phone`);
     }
 
     // Create products
@@ -178,35 +196,39 @@ export class ShopifySeeder extends BaseSeeder {
     }
 
     // Create draft orders
-    for (const order of orders) {
-      try {
-        const customerId = customerIds[order.contactIndex];
-        if (!customerId) continue;
+    if (options.skipOrders) {
+      logger.info(`[Shopify] Skipping ${orders.length} draft orders (skipOrders=true)`);
+    } else {
+      for (const order of orders) {
+        try {
+          const customerId = customerIds[order.contactIndex];
+          if (!customerId) continue;
 
-        const lineItems = order.productIndices
-          .map((pIdx, j) => {
-            const variantId = variantIds[pIdx];
-            if (!variantId) return null;
-            return { variant_id: variantId, quantity: order.quantities[j] };
-          })
-          .filter(Boolean);
+          const lineItems = order.productIndices
+            .map((pIdx, j) => {
+              const variantId = variantIds[pIdx];
+              if (!variantId) return null;
+              return { variant_id: variantId, quantity: order.quantities[j] };
+            })
+            .filter(Boolean);
 
-        if (lineItems.length === 0) continue;
+          if (lineItems.length === 0) continue;
 
-        await client.post({
-          path: 'draft_orders',
-          data: {
-            draft_order: {
-              line_items: lineItems,
-              customer: { id: customerId },
-              note: `Seeded test data — ${seededAt}`,
-              tags: `${SEEDED_TAG},${SEEDED_AT_TAG}:${seededAt}`,
+          await client.post({
+            path: 'draft_orders',
+            data: {
+              draft_order: {
+                line_items: lineItems,
+                customer: { id: customerId },
+                note: `Seeded test data — ${seededAt}`,
+                tags: SEEDED_TAG,
+              },
             },
-          },
-        });
-        created.orders++;
-      } catch (error) {
-        errors.push(`Order: ${error instanceof Error ? error.message : String(error)}`);
+          });
+          created.orders++;
+        } catch (error) {
+          errors.push(`Order: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
     }
 
@@ -352,4 +374,8 @@ export class ShopifySeeder extends BaseSeeder {
       return { connected: false, environment: 'unknown' };
     }
   }
+}
+
+function isPhoneInvalidError(message: string): boolean {
+  return /"phone"\s*:\s*\[\s*"is invalid"/.test(message);
 }

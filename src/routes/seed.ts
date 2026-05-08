@@ -16,6 +16,7 @@ const seedBody = z.object({
   useRandomDomains: z.boolean().default(false),
   dryRun: z.boolean().optional(),
   reuse: z.boolean().optional(),
+  skipOrders: z.boolean().optional(),
 });
 
 const cleanBody = z.object({

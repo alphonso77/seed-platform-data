@@ -14,6 +14,7 @@ export interface SeedOptions {
   useRandomDomains: boolean;
   dryRun?: boolean;
   reuse?: boolean;
+  skipOrders?: boolean;
 }
 
 export interface SeedResult {
@@ -87,3 +88,5 @@ export interface GeneratedOrder {
 
 export const SEEDED_TAG = 'seed_platform_seeded';
 export const SEEDED_AT_TAG = 'seed_platform_seeded_at';
+export const SIMULATION_RUN_ID_TAG = 'simulation_run_id';
+export const CANONICAL_ID_TAG = 'canonical_id';

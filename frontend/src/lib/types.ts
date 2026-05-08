@@ -21,6 +21,7 @@ export interface SeedOptions {
   emailDomains: string[];
   useRandomDomains: boolean;
   dryRun?: boolean;
+  skipOrders?: boolean;
 }
 
 export interface SeedResult {
@@ -54,3 +55,97 @@ export const PLATFORM_ICONS: Record<Platform, string> = {
   hubspot: 'H',
   shopify: 'Sh',
 };
+
+// ---- Simulation ----
+
+export type RunStage = 'generated' | 'uploaded' | 'oi-uploaded' | 'reported';
+
+export interface SimulationRunOptions {
+  size: DatasetSize;
+  fragment: boolean;
+  duplicate: boolean;
+  platforms?: Platform[];
+}
+
+export interface SimulationRunSummary {
+  runId: string;
+  createdAt: string;
+  options: SimulationRunOptions;
+  stage: RunStage;
+  counts: {
+    answerKey: number;
+    stripe: number;
+    hubspot: number;
+    shopify: number;
+  };
+}
+
+export interface UploadMappingEntry {
+  canonicalId: string;
+  internalId: string;
+  externalId: string;
+  platform: Platform;
+}
+
+export interface UploadResult {
+  runId: string;
+  uploadedAt: string;
+  mappings: UploadMappingEntry[];
+  errors: string[];
+}
+
+export type MergeStatus = 'fully_merged' | 'under_merged' | 'over_merged' | 'missing';
+
+export interface RecordResult {
+  canonicalId: string;
+  internalId: string;
+  platform: Platform;
+  externalId: string;
+  dnaRecordId: string | null;
+  pass: boolean;
+  mergeStatus: MergeStatus;
+}
+
+export interface CanonicalResult {
+  canonicalId: string;
+  mergeStatus: MergeStatus;
+  expectedRecords: number;
+  foundRecords: number;
+  dnaRecordIds: string[];
+}
+
+export interface SimulationReport {
+  runId: string;
+  generatedAt: string;
+  summary: {
+    canonicalCount: number;
+    fullyMerged: number;
+    underMerged: number;
+    overMerged: number;
+    missing: number;
+    recordsTotal: number;
+    recordsPassed: number;
+    recordsFailed: number;
+    precision: number;
+    recall: number;
+  };
+  canonicals: CanonicalResult[];
+  records: RecordResult[];
+}
+
+export interface SimulationRunState {
+  summary: SimulationRunSummary;
+  upload: UploadResult | null;
+  report: SimulationReport | null;
+}
+
+export type ArtifactName =
+  | 'meta.json'
+  | 'answer-key.json'
+  | 'stripe-dirty.json'
+  | 'hubspot-dirty.json'
+  | 'shopify-dirty.json'
+  | 'upload-result.json'
+  | 'oi-result.csv'
+  | 'report.json'
+  | 'report.csv';

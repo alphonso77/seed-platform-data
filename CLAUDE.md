@@ -15,6 +15,7 @@ npm run dev:all          # Both concurrently
 # CLI
 npm run cli              # Interactive menu
 npm run cli -- seed stripe --size medium --dry-run
+npm run cli -- seed stripe --reuse --size small   # reuse contacts from previous seed
 npm run cli -- clean hubspot
 npm run cli -- clean hubspot --orphans
 npm run cli -- status
@@ -25,7 +26,7 @@ npm run build            # tsc + tsc-alias → dist/
 npm run build:frontend   # cd frontend && vite build
 npm run typecheck        # tsc --noEmit
 npm run lint             # eslint src/ test/
-npm test                 # mocha (41 tests)
+npm test                 # mocha (51 tests)
 ```
 
 ## Architecture
@@ -52,6 +53,7 @@ frontend/       React 19 + Vite + Tailwind CSS 4 + TanStack Query
 - **Zod env validation** (`src/config/env.ts`) — validates at startup, accessed via `getEnv()`. Use `resetEnv()` in tests.
 - **Safety guards** — every seed/clean calls `validateEnvironment()` first. Hard block on production environments. Override per-platform in dev with `SKIP_SANDBOX_CHECK_STRIPE`, `SKIP_SANDBOX_CHECK_HUBSPOT`, `SKIP_SANDBOX_CHECK_SHOPIFY` env vars (ignored in production). Logic in `src/utils/safety.ts` and `src/commands/validate.ts`.
 - **Seeded data tagging** — Stripe uses metadata, HubSpot uses custom properties (auto-created by seeder), Shopify uses tags. Constants: `SEEDED_TAG` (`seed_platform_seeded`), `SEEDED_AT_TAG` (`seed_platform_seeded_at`) in `src/types/index.ts`. HubSpot clean leaves custom property definitions in place across runs — `ensureCustomProperties` is idempotent, and dropping them mid-run orphans surviving records and breaks subsequent searches. Pass `--orphans` (CLI flag, `orphans: true` in API/UI) to enable a deals-only fallback that searches by `dealname CONTAINS_TOKEN "Seed Order"` to recover records when the SEEDED_TAG property is missing.
+- **Contact reuse cache** — `src/utils/dataset-cache.ts` writes the most recent run's generated contacts to `.seed-cache/last.json` (gitignored, never on dry-run). Subsequent seeds with `--reuse` (CLI) or `reuse: true` (API/UI) load contacts from cache instead of regenerating, so the same people can be seeded across HubSpot/Stripe/Shopify. Products and orders always regenerate. The `GET /api/cache/contacts` endpoint reports cache existence + metadata for UI gating. Tests can override the cache directory via `SEED_CACHE_DIR` env var.
 - **Batched platform operations** — HubSpot seeds and cleans use `batchApi.create`/`batchApi.archive` chunked at 100 (HubSpot's per-batch limit) with per-record fallback on batch failure; progress logged per batch via `logger.info`. Each SEEDED_TAG search in HubSpot clean preflights via `propertyExists` and skips that block with a warn if the property is missing on the object type. Stripe clean branches by `invoice.status`: `draft` → `del`, `open`/`uncollectible` → `voidInvoice`, `void` → no-op (already cleaned), `paid` → warn and skip.
 - **Path aliases** — `@/*`, `@config/*`, `@seeders/*`, `@generators/*`, `@commands/*`, `@cli/*`, `@routes/*`, `@types/*`, `@utils/*`. Resolved by tsc-alias at build time.
 - **Response shape** — API returns `{ data: T }` consistently.

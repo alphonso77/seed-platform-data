@@ -5,6 +5,7 @@ const navItems = [
   { to: '/', label: 'Dashboard' },
   { to: '/seed', label: 'Seed' },
   { to: '/clean', label: 'Clean' },
+  { to: '/simulation', label: 'Simulation' },
 ];
 
 export function Layout() {

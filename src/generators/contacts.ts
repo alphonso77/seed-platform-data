@@ -1,6 +1,16 @@
 import { faker } from '@faker-js/faker';
+import { parsePhoneNumberFromString } from 'libphonenumber-js';
 import { GeneratedContact } from '@/types';
 import { generateEmail, resetEmailTracker } from '@generators/emails';
+
+function generateValidUSPhone(): string {
+  for (let i = 0; i < 25; i++) {
+    const candidate = faker.phone.number({ style: 'national' });
+    const parsed = parsePhoneNumberFromString(candidate, 'US');
+    if (parsed?.isValid()) return parsed.format('E.164');
+  }
+  return '+12015550123';
+}
 
 export function generateContacts(
   count: number,
@@ -22,7 +32,7 @@ export function generateContacts(
       firstName,
       lastName,
       email,
-      phone: faker.phone.number({ style: 'national' }),
+      phone: generateValidUSPhone(),
       company: faker.company.name(),
       jobTitle: faker.person.jobTitle(),
       address: {

@@ -19,6 +19,7 @@ export function SeedForm({ platform, onSubmit, isLoading }: SeedFormProps) {
   const [useRandomDomains, setUseRandomDomains] = useState(true);
   const [customDomains, setCustomDomains] = useState('');
   const [dryRun, setDryRun] = useState(false);
+  const [skipOrders, setSkipOrders] = useState(false);
 
   const counts = DATASET_SIZES[size];
 
@@ -27,7 +28,13 @@ export function SeedForm({ platform, onSubmit, isLoading }: SeedFormProps) {
     const emailDomains = useRandomDomains
       ? []
       : customDomains.split(',').map((d) => d.trim()).filter(Boolean);
-    onSubmit({ size, emailDomains, useRandomDomains, dryRun });
+    onSubmit({
+      size,
+      emailDomains,
+      useRandomDomains,
+      dryRun,
+      ...(platform === 'shopify' ? { skipOrders } : {}),
+    });
   }
 
   return (
@@ -101,6 +108,30 @@ export function SeedForm({ platform, onSubmit, isLoading }: SeedFormProps) {
         />
         Dry run (preview only, no data created)
       </label>
+
+      {/* Skip orders (Shopify only) */}
+      {platform === 'shopify' && (
+        <label className="flex cursor-pointer items-start gap-3 text-sm text-gray-600 dark:text-gray-300">
+          <input
+            type="checkbox"
+            checked={skipOrders}
+            onChange={(e) => setSkipOrders(e.target.checked)}
+            className="mt-0.5 rounded border-gray-300 bg-white text-teal-500 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800"
+          />
+          <div>
+            <div className="font-medium text-gray-800 dark:text-gray-200">
+              Skip Shopify draft orders
+            </div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">
+              Only seed customers and products — no draft orders. The integration system currently
+              ingests customer objects only, so orders aren&apos;t needed for identity-resolution
+              testing. Shopify also rejects synthetic emails (e.g. <code>@*.example.com</code>) on
+              draft orders even though it accepts them on customers, so skipping avoids those
+              errors. Turn this off later when order ingestion is added.
+            </div>
+          </div>
+        </label>
+      )}
 
       {/* Submit */}
       <button

@@ -3,6 +3,7 @@ import { Layout } from './components/Layout';
 import { Dashboard } from './pages/Dashboard';
 import { SeedPage } from './pages/SeedPage';
 import { CleanPage } from './pages/CleanPage';
+import { SimulationPage } from './pages/SimulationPage';
 import { useTheme } from './hooks/useTheme';
 
 export default function App() {
@@ -15,6 +16,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/seed" element={<SeedPage />} />
         <Route path="/clean" element={<CleanPage />} />
+        <Route path="/simulation" element={<SimulationPage />} />
       </Route>
     </Routes>
   );

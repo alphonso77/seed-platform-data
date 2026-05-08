@@ -23,3 +23,14 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
 
   return body.data as T;
 }
+
+// Multipart variant — do NOT set Content-Type so the browser inserts the
+// multipart boundary. Body should be a FormData instance.
+export async function apiFetchMultipart<T>(path: string, formData: FormData): Promise<T> {
+  const res = await fetch(path, { method: 'POST', body: formData });
+  const body = await res.json();
+  if (!res.ok) {
+    throw new ApiError(body.error || 'Request failed', res.status, body.code);
+  }
+  return body.data as T;
+}

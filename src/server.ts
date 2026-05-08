@@ -11,6 +11,7 @@ import healthRoutes from '@routes/health';
 import platformRoutes from '@routes/platforms';
 import seedRoutes from '@routes/seed';
 import cacheRoutes from '@routes/cache';
+import simulationRoutes from '@routes/simulation';
 
 const app = express();
 
@@ -26,6 +27,7 @@ app.use('/api', healthRoutes);
 app.use('/api', platformRoutes);
 app.use('/api', seedRoutes);
 app.use('/api', cacheRoutes);
+app.use('/api', simulationRoutes);
 
 // Serve frontend static files in production
 const frontendDist = path.join(__dirname, '..', 'frontend', 'dist');

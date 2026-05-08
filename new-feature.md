@@ -44,6 +44,8 @@
 
 # Organic Intelligence Data Set
 
+See `data-lake-ex.csv` for an example of OI output.
+
 Here's the query that will generate the OI data. OI is supposed to re-stitch the fragmented data, and group duplicates.
 
 Each `dna_record_id` represents what OI believes to be an individual. So, the intentionally fragmented records should have their own row, but the same `dna_record_id`.
@@ -68,4 +70,10 @@ LEFT JOIN oi.dna_records d
           )
 WHERE r.org_id = 'ab0d85c5-b05e-499a-a7b0-06e1541addcf'
 ORDER BY r.ingested_at;
+```
+
+## Example CSV Output of OI
+
+```csv
+
 ```
