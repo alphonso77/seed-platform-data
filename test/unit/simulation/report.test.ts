@@ -33,6 +33,7 @@ function oiRow(
   dnaRecordId: string | null,
   platform: string,
   externalId: string,
+  rawPayload: Record<string, unknown> = {},
 ): OiResultRow {
   return {
     rawRecordId,
@@ -44,7 +45,7 @@ function oiRow(
     ingestedAt: null,
     lastModifiedAt: null,
     resolvedAt: null,
-    rawPayload: {},
+    rawPayload,
   };
 }
 
@@ -126,6 +127,93 @@ describe('simulation/report', () => {
 
     const report = generateReport({ runId: 'run', answerKey, uploadMapping: upload, oiRows: oi });
     expect(report.canonicals[0].mergeStatus).to.equal('fully_merged');
+  });
+
+  it('populates dnaBreakdown with grouped records and markers for an under_merged canonical (FS-7 cross-marker)', () => {
+    const answerKey = [person('c1')];
+    const upload = [
+      mapping('c1', 'i1', 'stripe', 'cus_1'),
+      mapping('c1', 'i2', 'hubspot', 'hs_2'),
+      mapping('c1', 'i3', 'hubspot', 'hs_3'),
+    ];
+    const oi = [
+      oiRow('r1', 'dna-1', 'stripe', 'cus_1', { email: 'a@x.com' }),
+      oiRow('r2', 'dna-2', 'hubspot', 'hs_2', {
+        properties: { email: 'b@x.com', phone: '+15551234' },
+      }),
+      oiRow('r3', 'dna-1', 'hubspot', 'hs_3', {
+        properties: { email: 'a@x.com', phone: '+15551234' },
+      }),
+    ];
+
+    const report = generateReport({ runId: 'run', answerKey, uploadMapping: upload, oiRows: oi });
+    const c = report.canonicals[0];
+    expect(c.mergeStatus).to.equal('under_merged');
+    expect(c.dnaRecordIds).to.have.length(2);
+    expect(c.dnaBreakdown).to.exist;
+    const breakdown = c.dnaBreakdown!;
+    expect(breakdown).to.have.length(2);
+
+    const groupByDna = new Map(breakdown.map((g) => [g.dnaRecordId, g]));
+    const dna1 = groupByDna.get('dna-1')!;
+    const dna2 = groupByDna.get('dna-2')!;
+    expect(dna1.records).to.have.length(2);
+    expect(dna2.records).to.have.length(1);
+
+    const dna1ByExternal = new Map(dna1.records.map((r) => [r.externalId, r]));
+    expect(dna1ByExternal.get('cus_1')).to.deep.include({
+      platform: 'stripe',
+      email: 'a@x.com',
+      phone: null,
+    });
+    expect(dna1ByExternal.get('hs_3')).to.deep.include({
+      platform: 'hubspot',
+      email: 'a@x.com',
+      phone: '+15551234',
+    });
+    expect(dna2.records[0]).to.deep.include({
+      platform: 'hubspot',
+      externalId: 'hs_2',
+      email: 'b@x.com',
+      phone: '+15551234',
+    });
+  });
+
+  it('populates dnaBreakdown for over_merged canonicals', () => {
+    const answerKey = [person('c1'), person('c2')];
+    const upload = [
+      mapping('c1', 'i1', 'stripe', 'cus_1'),
+      mapping('c2', 'i2', 'stripe', 'cus_2'),
+    ];
+    const oi = [
+      oiRow('r1', 'd-merged', 'stripe', 'cus_1', { email: 'c1@x.com', phone: '+15550001' }),
+      oiRow('r2', 'd-merged', 'stripe', 'cus_2', { email: 'c2@x.com', phone: '+15550002' }),
+    ];
+
+    const report = generateReport({ runId: 'run', answerKey, uploadMapping: upload, oiRows: oi });
+    expect(report.canonicals.map((c) => c.mergeStatus)).to.deep.equal(['over_merged', 'over_merged']);
+    for (const c of report.canonicals) {
+      expect(c.dnaBreakdown).to.exist;
+      expect(c.dnaBreakdown!).to.have.length(1);
+      expect(c.dnaBreakdown![0].dnaRecordId).to.equal('d-merged');
+      expect(c.dnaBreakdown![0].records).to.have.length(1);
+    }
+  });
+
+  it('omits dnaBreakdown for fully_merged canonicals', () => {
+    const answerKey = [person('c1')];
+    const upload = [
+      mapping('c1', 'i1', 'stripe', 'cus_1'),
+      mapping('c1', 'i2', 'hubspot', 'hs_1'),
+    ];
+    const oi = [
+      oiRow('r1', 'd-shared', 'stripe', 'cus_1', { email: 'c1@x.com' }),
+      oiRow('r2', 'd-shared', 'hubspot', 'hs_1', { properties: { email: 'c1@x.com' } }),
+    ];
+
+    const report = generateReport({ runId: 'run', answerKey, uploadMapping: upload, oiRows: oi });
+    expect(report.canonicals[0].mergeStatus).to.equal('fully_merged');
+    expect(report.canonicals[0].dnaBreakdown).to.be.undefined;
   });
 
   it('computes pairwise precision and recall correctly for a mixed scenario', () => {

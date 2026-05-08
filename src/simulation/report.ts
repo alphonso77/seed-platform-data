@@ -2,6 +2,8 @@ import { Platform } from '@/types';
 import {
   CanonicalPerson,
   CanonicalResult,
+  DnaBreakdownGroup,
+  DnaBreakdownRecord,
   MergeStatus,
   OiResultRow,
   RecordResult,
@@ -29,6 +31,12 @@ export function generateReport(input: GenerateReportInput): Report {
   const mappingByExternal = new Map<string, UploadMappingEntry>();
   for (const m of uploadMapping) {
     mappingByExternal.set(platformKey(m.platform, m.externalId), m);
+  }
+
+  // Index OI rows by the same key for per-canonical marker lookup.
+  const oiByPlatformKey = new Map<string, OiResultRow>();
+  for (const row of oiRows) {
+    oiByPlatformKey.set(platformKey(row.sourcePlatform, row.sourceRecordId), row);
   }
 
   // For each upload mapping entry, find its dna_record_id (or null if OI dropped it).
@@ -83,12 +91,18 @@ export function generateReport(input: GenerateReportInput): Report {
       status = mergedWithOthers ? 'over_merged' : 'fully_merged';
     }
 
+    const dnaBreakdown =
+      status === 'under_merged' || status === 'over_merged'
+        ? buildDnaBreakdown(expected, dnaByInternalId, oiByPlatformKey)
+        : undefined;
+
     canonicals.push({
       canonicalId: person.canonicalId,
       mergeStatus: status,
       expectedRecords: expected.length,
       foundRecords: found.length,
       dnaRecordIds: dnaIds,
+      ...(dnaBreakdown && dnaBreakdown.length > 0 ? { dnaBreakdown } : {}),
     });
 
     for (const m of expected) {
@@ -219,6 +233,51 @@ function unique<T>(items: T[]): T[] {
 
 function isNonNull<T>(value: T | null | undefined): value is T {
   return value != null;
+}
+
+function buildDnaBreakdown(
+  expected: UploadMappingEntry[],
+  dnaByInternalId: Map<string, string | null>,
+  oiByPlatformKey: Map<string, OiResultRow>,
+): DnaBreakdownGroup[] {
+  const groups = new Map<string, DnaBreakdownRecord[]>();
+  for (const m of expected) {
+    const dna = dnaByInternalId.get(m.internalId);
+    if (!dna) continue;
+    const row = oiByPlatformKey.get(platformKey(m.platform, m.externalId));
+    const markers = row ? extractMarkers(m.platform, row.rawPayload) : { email: null, phone: null };
+    const list = groups.get(dna) ?? [];
+    list.push({
+      platform: m.platform,
+      externalId: m.externalId,
+      internalId: m.internalId,
+      email: markers.email,
+      phone: markers.phone,
+    });
+    groups.set(dna, list);
+  }
+  return Array.from(groups.entries()).map(([dnaRecordId, records]) => ({ dnaRecordId, records }));
+}
+
+function extractMarkers(
+  platform: Platform,
+  payload: Record<string, unknown>,
+): { email: string | null; phone: string | null } {
+  if (platform === 'hubspot') {
+    const props = (payload.properties ?? {}) as Record<string, unknown>;
+    return {
+      email: stringOrNull(props.email),
+      phone: stringOrNull(props.phone) ?? stringOrNull(props.mobilephone),
+    };
+  }
+  return {
+    email: stringOrNull(payload.email),
+    phone: stringOrNull(payload.phone),
+  };
+}
+
+function stringOrNull(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
 // Re-export to help routes typecheck — referenced platforms list.

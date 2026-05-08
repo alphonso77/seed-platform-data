@@ -89,12 +89,33 @@ export interface RecordResult {
   mergeStatus: MergeStatus;
 }
 
+export interface DnaBreakdownRecord {
+  platform: Platform;
+  externalId: string;
+  internalId: string;
+  email: string | null;
+  phone: string | null;
+}
+
+export interface DnaBreakdownGroup {
+  dnaRecordId: string;
+  records: DnaBreakdownRecord[];
+}
+
 export interface CanonicalResult {
   canonicalId: string;
   mergeStatus: MergeStatus;
   expectedRecords: number;
   foundRecords: number;
   dnaRecordIds: string[];
+  /**
+   * Populated only for `under_merged` and `over_merged` canonicals (kept off
+   * `fully_merged` to keep clean reports compact). Groups the canonical's
+   * records by their landing DNA, with markers extracted from the raw payload
+   * so a reader can see which marker bridged each record without joining
+   * tables manually.
+   */
+  dnaBreakdown?: DnaBreakdownGroup[];
 }
 
 export interface Report {
