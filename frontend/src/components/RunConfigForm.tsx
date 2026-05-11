@@ -24,6 +24,7 @@ export function RunConfigForm({ onSubmit, isLoading }: Props) {
   const [size, setSize] = useState<DatasetSize>('small');
   const [fragment, setFragment] = useState(true);
   const [duplicate, setDuplicate] = useState(true);
+  const [fuzzy, setFuzzy] = useState(false);
   const [platforms, setPlatforms] = useState<Platform[]>(ALL_PLATFORMS);
 
   const togglePlatform = (p: Platform) => {
@@ -33,7 +34,7 @@ export function RunConfigForm({ onSubmit, isLoading }: Props) {
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (platforms.length === 0) return;
-    onSubmit({ size, fragment, duplicate, platforms });
+    onSubmit({ size, fragment, duplicate, fuzzy, platforms });
   }
 
   return (
@@ -130,6 +131,22 @@ export function RunConfigForm({ onSubmit, isLoading }: Props) {
             <div className="text-xs text-gray-500 dark:text-gray-400">
               Stripe: same email, different attributes. HubSpot: same phone, different emails.
               Shopify: split phone-only / email-only.
+            </div>
+          </div>
+        </label>
+
+        <label className="flex cursor-pointer items-start gap-3 text-sm text-gray-600 dark:text-gray-300">
+          <input
+            type="checkbox"
+            checked={fuzzy}
+            onChange={(e) => setFuzzy(e.target.checked)}
+            className="mt-0.5 rounded border-gray-300 bg-white text-teal-500 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-800"
+          />
+          <div>
+            <div className="font-medium text-gray-800 dark:text-gray-200">Fuzzy duplicates (Tier 2)</div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">
+              Emit duplicates that miss Tier 1 — nickname / typo names and abbreviated street
+              suffixes — to exercise the upstream fuzzy resolver and its review queue.
             </div>
           </div>
         </label>

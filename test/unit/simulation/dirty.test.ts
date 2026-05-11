@@ -1,6 +1,10 @@
 import { expect } from 'chai';
 import { generateAnswerKey } from '../../../src/simulation/answer-key';
-import { generateDirtyDatasets } from '../../../src/simulation/dirty';
+import {
+  abbreviateAddress,
+  generateDirtyDatasets,
+  mutateName,
+} from '../../../src/simulation/dirty';
 import { CanonicalPerson, DirtyContact } from '../../../src/simulation/types';
 
 function recordsForCanonical(records: DirtyContact[], canonicalId: string): DirtyContact[] {
@@ -103,5 +107,175 @@ describe('simulation/dirty', () => {
     expect(b.stripe.length).to.equal(a.stripe.length);
     expect(b.hubspot.length).to.equal(a.hubspot.length);
     expect(b.shopify.length).to.equal(a.shopify.length);
+  });
+
+  describe('fuzzy duplicates', () => {
+    it('fuzzy: false produces output identical to fuzzy omitted', () => {
+      const off = generateDirtyDatasets(answerKey, {
+        fragment: false,
+        duplicate: false,
+        fuzzy: false,
+        seed: 1,
+      });
+      const omitted = generateDirtyDatasets(answerKey, {
+        fragment: false,
+        duplicate: false,
+        seed: 1,
+      });
+      // Same counts and same canonical → record breakdown means the fuzzy
+      // branch consumed zero rng draws when disabled.
+      expect(off.stripe.length).to.equal(omitted.stripe.length);
+      expect(off.hubspot.length).to.equal(omitted.hubspot.length);
+      expect(off.shopify.length).to.equal(omitted.shopify.length);
+      expect(off.stripe.length).to.equal(answerKey.length);
+    });
+
+    it('fuzzy: true produces at least one Tier-2-shaped variant per platform across seeds', () => {
+      // Per-platform: scan a handful of seeds for evidence that fuzzyDuplicate
+      // fires and emits a record that (a) shares the canonical id, (b) has a
+      // different exact email than the canonical, (c) has no exact phone match.
+      const platforms = ['stripe', 'hubspot', 'shopify'] as const;
+      for (const platform of platforms) {
+        let found = false;
+        for (let seed = 1; seed < 50 && !found; seed++) {
+          const dirty = generateDirtyDatasets(answerKey, {
+            fragment: false,
+            duplicate: false,
+            fuzzy: true,
+            seed,
+          });
+          for (const person of answerKey) {
+            const records = dirty[platform].filter((r) => r.canonicalId === person.canonicalId);
+            const fuzzyHit = records.find(
+              (r) =>
+                r.email !== person.email &&
+                (r.phone === null || r.phone !== person.phone) &&
+                (r.firstName !== person.firstName ||
+                  r.lastName !== person.lastName ||
+                  r.address?.street !== person.address.street),
+            );
+            if (fuzzyHit) {
+              found = true;
+              break;
+            }
+          }
+        }
+        expect(found, `expected a fuzzy duplicate on ${platform} within 50 seeds`).to.be.true;
+      }
+    });
+
+    it('Stripe fuzzy duplicates share email domain with the canonical', () => {
+      // Stripe's fuzzy variant uses mutateEmail (same domain, different local
+      // part). Confirm the domain matches when a fuzzy record exists.
+      let checked = false;
+      for (let seed = 1; seed < 50; seed++) {
+        const dirty = generateDirtyDatasets(answerKey, {
+          fragment: false,
+          duplicate: false,
+          fuzzy: true,
+          seed,
+        });
+        for (const person of answerKey) {
+          const records = dirty.stripe.filter((r) => r.canonicalId === person.canonicalId);
+          if (records.length < 2) continue;
+          const fuzzy = records.find((r) => r.email !== person.email);
+          if (!fuzzy || !fuzzy.email) continue;
+          const canonicalDomain = person.email.split('@')[1];
+          const fuzzyDomain = fuzzy.email.split('@')[1];
+          expect(fuzzyDomain).to.equal(canonicalDomain);
+          checked = true;
+        }
+        if (checked) break;
+      }
+      expect(checked, 'expected to find at least one Stripe fuzzy duplicate to inspect').to.be.true;
+    });
+
+    it('is reproducible with the same seed when fuzzy is enabled', () => {
+      const a = generateDirtyDatasets(answerKey, {
+        fragment: true,
+        duplicate: true,
+        fuzzy: true,
+        seed: 123,
+      });
+      const b = generateDirtyDatasets(answerKey, {
+        fragment: true,
+        duplicate: true,
+        fuzzy: true,
+        seed: 123,
+      });
+      // Compare structurally — internalId is a uuid (non-deterministic), so
+      // strip it before comparing.
+      const strip = (records: DirtyContact[]) =>
+        records.map(({ internalId: _id, ...rest }) => rest);
+      expect(strip(a.stripe)).to.deep.equal(strip(b.stripe));
+      expect(strip(a.hubspot)).to.deep.equal(strip(b.hubspot));
+      expect(strip(a.shopify)).to.deep.equal(strip(b.shopify));
+    });
+  });
+
+  describe('mutateName', () => {
+    // Use a tiny deterministic rng for unit tests.
+    function rngFrom(values: number[]): () => number {
+      let i = 0;
+      return () => values[i++ % values.length];
+    }
+
+    it('swaps a known nickname (Joe → Joseph)', () => {
+      const out = mutateName('Joe', 'Smith', rngFrom([0.5]));
+      expect(out.first).to.equal('Joseph');
+      expect(out.last).to.equal('Smith');
+    });
+
+    it('swaps the long form back (Elizabeth → Liz)', () => {
+      const out = mutateName('Elizabeth', 'Brown', rngFrom([0.5]));
+      expect(out.first).to.equal('Liz');
+      expect(out.last).to.equal('Brown');
+    });
+
+    it('applies a single-character edit when no nickname matches', () => {
+      const out = mutateName('Xander', 'Quinn', rngFrom([0.0, 0.0, 0.0, 0.0]));
+      // One of first/last differs from the input but the other is unchanged.
+      const firstDiff = out.first !== 'Xander';
+      const lastDiff = out.last !== 'Quinn';
+      expect(firstDiff !== lastDiff, 'exactly one of first/last should be mutated').to.be.true;
+    });
+  });
+
+  describe('abbreviateAddress', () => {
+    function rng(): number {
+      return 0.5;
+    }
+
+    it('abbreviates a full street suffix (Street → St)', () => {
+      const out = abbreviateAddress(
+        { street: '123 Main Street', city: 'Townsville', state: 'CA', zip: '90210', country: 'US' },
+        rng,
+      );
+      expect(out?.street).to.equal('123 Main St');
+      expect(out?.city).to.equal('Townsville');
+      expect(out?.state).to.equal('CA');
+      expect(out?.zip).to.equal('90210');
+    });
+
+    it('expands an abbreviated street suffix (Ave → Avenue)', () => {
+      const out = abbreviateAddress(
+        { street: '456 Oak Ave', city: 'Townsville', state: 'CA', zip: '90210', country: 'US' },
+        rng,
+      );
+      expect(out?.street).to.equal('456 Oak Avenue');
+    });
+
+    it('falls back to toggling trailing period when no suffix matches', () => {
+      const out = abbreviateAddress(
+        { street: '789 Plaza', city: 'Townsville', state: 'CA', zip: '90210', country: 'US' },
+        rng,
+      );
+      expect(out?.street).to.equal('789 Plaza.');
+    });
+
+    it('returns the address unchanged when street is null', () => {
+      const addr = { street: null, city: null, state: null, zip: null, country: null };
+      expect(abbreviateAddress(addr, rng)).to.equal(addr);
+    });
   });
 });

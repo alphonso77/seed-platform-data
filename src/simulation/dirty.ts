@@ -5,6 +5,7 @@ import { CanonicalPerson, DirtyContact, DirtyDatasets } from '@/simulation/types
 export interface DirtyOptions {
   fragment: boolean;
   duplicate: boolean;
+  fuzzy?: boolean;
   seed?: number;
   platforms?: Platform[];
 }
@@ -13,6 +14,9 @@ interface PlatformConfig {
   fragment: (person: CanonicalPerson, rng: Rng) => Partial<DirtyContact>[];
   duplicate: (person: CanonicalPerson, rng: Rng) => Partial<DirtyContact>[];
   duplicateRate: number;
+  /** Emits records that miss Tier 1 but share enough fuzzy signal for Tier 2. */
+  fuzzyDuplicate: (person: CanonicalPerson, rng: Rng) => Partial<DirtyContact>[];
+  fuzzyDuplicateRate: number;
 }
 
 type Rng = () => number;
@@ -100,6 +104,16 @@ const PLATFORMS: Record<keyof DirtyDatasets, PlatformConfig> = {
       },
     ],
     duplicateRate: 0.1,
+    // Tier 2 address-abbreviation variant: same name + same email-domain
+    // (different local part) + null phone + abbreviated street suffix.
+    fuzzyDuplicate: (person, rng) => [
+      {
+        email: mutateEmail(person.email, rng),
+        phone: null,
+        address: abbreviateAddress(person.address, rng),
+      },
+    ],
+    fuzzyDuplicateRate: 0.15,
   },
   stripe: {
     fragment: (person, rng) => [pick(rng, STRIPE_FRAGMENTS)()],
@@ -112,6 +126,20 @@ const PLATFORMS: Record<keyof DirtyDatasets, PlatformConfig> = {
       },
     ],
     duplicateRate: 0.3,
+    // Tier 2 name-mutation variant: nickname swap or single-char typo,
+    // same email-domain (different local part), null phone.
+    fuzzyDuplicate: (person, rng) => {
+      const mutated = mutateName(person.firstName, person.lastName, rng);
+      return [
+        {
+          firstName: mutated.first,
+          lastName: mutated.last,
+          email: mutateEmail(person.email, rng),
+          phone: null,
+        },
+      ];
+    },
+    fuzzyDuplicateRate: 0.15,
   },
   shopify: {
     fragment: (person, rng) => [pick(rng, SHOPIFY_FRAGMENTS)()],
@@ -121,6 +149,23 @@ const PLATFORMS: Record<keyof DirtyDatasets, PlatformConfig> = {
       { email: null }, // phone-only variant
     ],
     duplicateRate: 0.1,
+    // Tier 2 combined variant: nickname / typo name + abbreviated address,
+    // different email entirely (different domain) and no phone — exercises
+    // fuzzy resolution without any shared email-domain or phone-prefix block.
+    fuzzyDuplicate: (person, rng) => {
+      const mutated = mutateName(person.firstName, person.lastName, rng);
+      const suffix = Math.floor(rng() * 10000);
+      return [
+        {
+          firstName: mutated.first,
+          lastName: mutated.last,
+          email: `${mutated.first.toLowerCase()}.${suffix}@example.com`,
+          phone: null,
+          address: abbreviateAddress(person.address, rng),
+        },
+      ];
+    },
+    fuzzyDuplicateRate: 0.15,
   },
 };
 
@@ -139,6 +184,115 @@ function jitterStreet(street: string | null, rng: Rng): string | null {
   if (!street) return street;
   const offset = Math.floor(rng() * 100) + 1;
   return `${offset} ${street}`;
+}
+
+// Small hand-curated nickname table for Tier 2 fuzzy-name cases. Bidirectional:
+// if a key is found, swap to its partner. Not canonical — just enough variety
+// to produce recognizable nickname duplicates for Checkpoint 1 inspection.
+const NICKNAMES: Record<string, string> = {
+  joe: 'joseph', joseph: 'joe',
+  liz: 'elizabeth', elizabeth: 'liz',
+  bob: 'robert', robert: 'bob',
+  tom: 'thomas', thomas: 'tom',
+  bill: 'william', william: 'bill',
+  dick: 'richard', richard: 'dick',
+  jim: 'james', james: 'jim',
+  mike: 'michael', michael: 'mike',
+  dave: 'david', david: 'dave',
+  chris: 'christopher', christopher: 'chris',
+};
+
+const STREET_TYPES: Array<[long: string, short: string]> = [
+  ['street', 'st'],
+  ['avenue', 'ave'],
+  ['boulevard', 'blvd'],
+  ['drive', 'dr'],
+  ['road', 'rd'],
+  ['lane', 'ln'],
+  ['court', 'ct'],
+];
+
+function capitalize(word: string): string {
+  if (!word) return word;
+  return word[0].toUpperCase() + word.slice(1).toLowerCase();
+}
+
+function singleCharEdit(word: string, rng: Rng): string {
+  if (!word) return word;
+  const op = Math.floor(rng() * 3); // 0=substitute, 1=insert, 2=delete (skipped on len<=2)
+  const pos = Math.floor(rng() * word.length);
+  const letter = String.fromCharCode(97 + Math.floor(rng() * 26)); // a..z
+  if (op === 2 && word.length > 2) {
+    return word.slice(0, pos) + word.slice(pos + 1);
+  }
+  if (op === 1) {
+    return word.slice(0, pos) + letter + word.slice(pos);
+  }
+  // substitute (also fallback when delete would shrink too far)
+  return word.slice(0, pos) + letter + word.slice(pos + 1);
+}
+
+/**
+ * Mutate a name to produce a Tier-2-fuzzy variant of the original. If the
+ * first name has a nickname-table entry, swap to its partner; otherwise apply
+ * a single-character edit (insert/delete/substitute) to one of the names.
+ * Deterministic given the rng state.
+ */
+export function mutateName(
+  first: string,
+  last: string,
+  rng: Rng,
+): { first: string; last: string } {
+  const firstLower = first.toLowerCase();
+  const lastLower = last.toLowerCase();
+  if (NICKNAMES[firstLower]) {
+    return { first: capitalize(NICKNAMES[firstLower]), last };
+  }
+  if (NICKNAMES[lastLower]) {
+    return { first, last: capitalize(NICKNAMES[lastLower]) };
+  }
+  // No nickname hit — apply a single-char Levenshtein-1 edit. Pick first or
+  // last to mutate based on the next rng draw.
+  const mutateFirst = rng() < 0.5;
+  if (mutateFirst) {
+    return { first: capitalize(singleCharEdit(firstLower, rng)), last };
+  }
+  return { first, last: capitalize(singleCharEdit(lastLower, rng)) };
+}
+
+/**
+ * Mutate an address to produce a Tier-2-fuzzy variant by swapping the street
+ * suffix between its long form and its abbreviation (Street ↔ St, Avenue ↔
+ * Ave, etc.). If no suffix is recognized, toggles the trailing period as a
+ * fallback trigram-perturbing mutation. Other fields are preserved.
+ */
+export function abbreviateAddress(
+  addr: DirtyContact['address'],
+  rng: Rng,
+): DirtyContact['address'] {
+  if (!addr || !addr.street) return addr;
+  const street = addr.street;
+  const trailingPeriod = /\.$/.test(street);
+  const stripped = trailingPeriod ? street.slice(0, -1) : street;
+  // Match the final token (case-insensitive). Swap to its partner if known.
+  const match = stripped.match(/^(.*?)(\s+)(\S+)$/);
+  if (match) {
+    const [, prefix, sep, token] = match;
+    const tokenLower = token.toLowerCase();
+    for (const [long, short] of STREET_TYPES) {
+      if (tokenLower === long) {
+        return { ...addr, street: `${prefix}${sep}${capitalize(short)}` };
+      }
+      if (tokenLower === short) {
+        return { ...addr, street: `${prefix}${sep}${capitalize(long)}` };
+      }
+    }
+  }
+  // Fallback: toggle trailing period to still perturb the trigram set. Use
+  // rng to keep the call deterministic relative to the rng stream even when
+  // the branch isn't strictly needed.
+  rng();
+  return { ...addr, street: trailingPeriod ? stripped : `${stripped}.` };
 }
 
 function ensureContactable(
@@ -165,7 +319,16 @@ function buildPlatformRecords(
       ? config.duplicate(person, rng)
       : [{}];
 
-    for (const variant of variants) {
+    // Fuzzy duplicates run independently of the Tier-1 duplicate path: a
+    // canonical can produce a Tier-1-style dup (same exact email) AND a
+    // Tier-2-style fuzzy dup (mutated name / address, different exact email)
+    // in the same run.
+    const fuzzyVariants =
+      options.fuzzy && rng() < config.fuzzyDuplicateRate
+        ? config.fuzzyDuplicate(person, rng)
+        : [];
+
+    for (const variant of [...variants, ...fuzzyVariants]) {
       const fragment = options.fragment ? config.fragment(person, rng)[0] : {};
       // Variant overrides come second so duplication patterns (e.g. email mutation) win
       // over generic fragmentation drops.

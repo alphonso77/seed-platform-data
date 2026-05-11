@@ -38,6 +38,7 @@ export async function runGenerate(
   const dirty = generateDirtyDatasets(answerKey, {
     fragment: options.fragment,
     duplicate: options.duplicate,
+    fuzzy: options.fuzzy,
     platforms: options.platforms,
   });
   const summary = await createRun({ runId, options, answerKey, dirty });

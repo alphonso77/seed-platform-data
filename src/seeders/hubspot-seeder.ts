@@ -203,9 +203,11 @@ export class HubSpotSeeder extends BaseSeeder {
       const namesInBatch = uniqueCompanies.slice(i, i + BATCH_SIZE);
       try {
         const response = await this.client.crm.companies.batchApi.create({ inputs: batch });
-        // HubSpot batch responses preserve input order — map index-to-index back to the company name.
-        for (let j = 0; j < response.results.length; j++) {
-          companyIds.set(namesInBatch[j], response.results[j].id);
+        // HubSpot batch responses are NOT guaranteed to preserve input order — match by
+        // the `name` property echoed back in each result.
+        for (const result of response.results) {
+          const name = result.properties?.name;
+          if (name) companyIds.set(name, result.id);
         }
         created.companies += response.results.length;
       } catch (batchError) {

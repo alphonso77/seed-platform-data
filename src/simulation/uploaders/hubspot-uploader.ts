@@ -5,6 +5,7 @@ import {
   PlatformConfig,
   SEEDED_AT_TAG,
   SEEDED_TAG,
+  SIMULATION_INTERNAL_ID_TAG,
   SIMULATION_RUN_ID_TAG,
 } from '@/types';
 import { DirtyContact, UploadMappingEntry } from '@/simulation/types';
@@ -65,6 +66,7 @@ export class HubSpotUploader extends BaseUploader {
       { name: SEEDED_AT_TAG, label: 'Seed Platform Seeded At', type: 'string', fieldType: 'text' },
       { name: SIMULATION_RUN_ID_TAG, label: 'Simulation Run ID', type: 'string', fieldType: 'text' },
       { name: CANONICAL_ID_TAG, label: 'Canonical ID', type: 'string', fieldType: 'text' },
+      { name: SIMULATION_INTERNAL_ID_TAG, label: 'Simulation Internal ID', type: 'string', fieldType: 'text' },
     ];
 
     for (const prop of propertyDefs) {
@@ -106,18 +108,28 @@ export class HubSpotUploader extends BaseUploader {
 
     for (let i = 0; i < inputs.length; i += BATCH_SIZE) {
       const slice = inputs.slice(i, i + BATCH_SIZE);
+      // Index slice inputs by internalId so we can match each response back
+      // unambiguously — HubSpot's batch create response is NOT guaranteed to
+      // preserve input order.
+      const sliceByInternalId = new Map(slice.map((s) => [s.record.internalId, s.record]));
       try {
         const response = await this.client.crm.contacts.batchApi.create({
           inputs: slice.map((s) => s.input),
         });
-        // HubSpot batch responses preserve input order.
-        for (let j = 0; j < response.results.length; j++) {
-          const record = slice[j].record;
+        for (const result of response.results) {
+          const internalId = result.properties?.[SIMULATION_INTERNAL_ID_TAG];
+          const record = internalId ? sliceByInternalId.get(internalId) : undefined;
+          if (!record) {
+            errors.push(
+              `HubSpot contact (externalId ${result.id}): batch response missing or unmatched ${SIMULATION_INTERNAL_ID_TAG} — cannot map back to canonical`,
+            );
+            continue;
+          }
           mappings.push({
             canonicalId: record.canonicalId,
             internalId: record.internalId,
             platform: 'hubspot',
-            externalId: response.results[j].id,
+            externalId: result.id,
           });
         }
       } catch (batchError) {
@@ -155,6 +167,7 @@ function buildContactInput(record: DirtyContact, runId: string, seededAt: string
     [SEEDED_AT_TAG]: seededAt,
     [SIMULATION_RUN_ID_TAG]: runId,
     [CANONICAL_ID_TAG]: record.canonicalId,
+    [SIMULATION_INTERNAL_ID_TAG]: record.internalId,
   };
   if (record.firstName) properties.firstname = record.firstName;
   if (record.lastName) properties.lastname = record.lastName;

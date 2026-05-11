@@ -26,6 +26,7 @@ const generateBody = z.object({
   size: z.enum(['small', 'medium', 'large']),
   fragment: z.boolean().default(false),
   duplicate: z.boolean().default(false),
+  fuzzy: z.boolean().default(false),
   platforms: z.array(z.enum(['stripe', 'hubspot', 'shopify'])).min(1).optional(),
 });
 

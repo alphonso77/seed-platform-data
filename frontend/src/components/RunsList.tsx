@@ -63,6 +63,7 @@ export function RunsList({ runs, selectedRunId, onSelect }: Props) {
                     {run.options.size}
                     {run.options.fragment && ' · fragment'}
                     {run.options.duplicate && ' · duplicate'}
+                    {run.options.fuzzy && ' · fuzzy'}
                   </span>
                 </div>
                 <span className={`rounded px-2 py-0.5 text-xs font-medium ${STAGE_COLOR[run.stage]}`}>

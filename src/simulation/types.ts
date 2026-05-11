@@ -32,6 +32,7 @@ export interface SimulationRunOptions {
   size: DatasetSize;
   fragment: boolean;
   duplicate: boolean;
+  fuzzy?: boolean;
   platforms?: Platform[];
 }
 

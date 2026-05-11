@@ -6,6 +6,7 @@ import {
   SEEDED_TAG,
   SIMULATION_RUN_ID_TAG,
   CANONICAL_ID_TAG,
+  SIMULATION_INTERNAL_ID_TAG,
 } from '../../../../src/types';
 
 function record(overrides: Partial<DirtyContact> = {}): DirtyContact {
@@ -50,11 +51,16 @@ function makeUploader(): { uploader: HubSpotUploader; client: HubSpotClientStub 
 describe('HubSpotUploader.upload', () => {
   afterEach(() => sinon.restore());
 
-  it('stamps the simulation tags as contact properties and returns mappings in input order', async () => {
+  it('stamps the simulation tags as contact properties and matches mappings via simulation_internal_id', async () => {
     const { uploader, client } = makeUploader();
     const create = sinon
       .stub(client.crm.contacts.batchApi, 'create')
-      .resolves({ results: [{ id: '111' }, { id: '222' }] } as never);
+      .resolves({
+        results: [
+          { id: '111', properties: { [SIMULATION_INTERNAL_ID_TAG]: 'i-A' } },
+          { id: '222', properties: { [SIMULATION_INTERNAL_ID_TAG]: 'i-B' } },
+        ],
+      } as never);
 
     const records = [
       record({ canonicalId: 'c-A', internalId: 'i-A' }),
@@ -62,7 +68,7 @@ describe('HubSpotUploader.upload', () => {
     ];
     const { mappings, errors } = await uploader.upload(records, 'run-1');
     expect(errors).to.be.empty;
-    expect(mappings).to.deep.equal([
+    expect(mappings).to.have.deep.members([
       { canonicalId: 'c-A', internalId: 'i-A', platform: 'hubspot', externalId: '111' },
       { canonicalId: 'c-B', internalId: 'i-B', platform: 'hubspot', externalId: '222' },
     ]);
@@ -71,15 +77,57 @@ describe('HubSpotUploader.upload', () => {
     expect(inputs[0].properties[SEEDED_TAG]).to.equal('true');
     expect(inputs[0].properties[SIMULATION_RUN_ID_TAG]).to.equal('run-1');
     expect(inputs[0].properties[CANONICAL_ID_TAG]).to.equal('c-A');
+    expect(inputs[0].properties[SIMULATION_INTERNAL_ID_TAG]).to.equal('i-A');
     expect(inputs[0].properties.email).to.equal('ada@example.com');
     expect(inputs[1].properties.email).to.equal('b@example.com');
+  });
+
+  it('matches mappings correctly even when HubSpot returns batch results out of order', async () => {
+    const { uploader, client } = makeUploader();
+    sinon
+      .stub(client.crm.contacts.batchApi, 'create')
+      // results intentionally returned in REVERSE input order
+      .resolves({
+        results: [
+          { id: '222', properties: { [SIMULATION_INTERNAL_ID_TAG]: 'i-B' } },
+          { id: '111', properties: { [SIMULATION_INTERNAL_ID_TAG]: 'i-A' } },
+        ],
+      } as never);
+
+    const records = [
+      record({ canonicalId: 'c-A', internalId: 'i-A' }),
+      record({ canonicalId: 'c-B', internalId: 'i-B', email: 'b@example.com' }),
+    ];
+    const { mappings, errors } = await uploader.upload(records, 'run-1');
+    expect(errors).to.be.empty;
+    expect(mappings).to.have.deep.members([
+      { canonicalId: 'c-A', internalId: 'i-A', platform: 'hubspot', externalId: '111' },
+      { canonicalId: 'c-B', internalId: 'i-B', platform: 'hubspot', externalId: '222' },
+    ]);
+  });
+
+  it('records an error when a batch result is missing simulation_internal_id', async () => {
+    const { uploader, client } = makeUploader();
+    sinon
+      .stub(client.crm.contacts.batchApi, 'create')
+      .resolves({ results: [{ id: '111', properties: {} }] } as never);
+
+    const { mappings, errors } = await uploader.upload(
+      [record({ canonicalId: 'c-A', internalId: 'i-A' })],
+      'run-1',
+    );
+    expect(mappings).to.be.empty;
+    expect(errors).to.have.lengthOf(1);
+    expect(errors[0]).to.match(/simulation_internal_id|cannot map back/i);
   });
 
   it('omits null fields rather than sending null property values', async () => {
     const { uploader, client } = makeUploader();
     const create = sinon
       .stub(client.crm.contacts.batchApi, 'create')
-      .resolves({ results: [{ id: '111' }] } as never);
+      .resolves({
+        results: [{ id: '111', properties: { [SIMULATION_INTERNAL_ID_TAG]: 'int-1' } }],
+      } as never);
 
     await uploader.upload([record({ phone: null, address: null })], 'run-2');
     const props = create.firstCall.args[0].inputs[0].properties;
