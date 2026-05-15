@@ -6,3 +6,4 @@ dist/
 simulation-runs/
 frontend/dist/
 frontend/node_modules/
+.claude/scheduled_tasks*

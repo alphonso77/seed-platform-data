@@ -149,11 +149,16 @@ const PLATFORMS: Record<keyof DirtyDatasets, PlatformConfig> = {
       { email: null }, // phone-only variant
     ],
     duplicateRate: 0.1,
-    // Tier 2 combined variant: nickname / typo name + abbreviated address,
-    // different email entirely (different domain) and no phone — exercises
-    // fuzzy resolution without any shared email-domain or phone-prefix block.
+    // Tier 2 combined variant: 50% of the time use a reversed first/last
+    // ordering (Tier 2 calibration target for the JW≈0.5 case — see
+    // Session 6 tuning notes), 50% use nickname/typo mutation. Both
+    // shapes pair with abbreviated address + different email entirely +
+    // null phone, so neither side shares email-domain or phone-prefix.
     fuzzyDuplicate: (person, rng) => {
-      const mutated = mutateName(person.firstName, person.lastName, rng);
+      const reverse = rng() < 0.5;
+      const mutated = reverse
+        ? reverseFirstLast(person.firstName, person.lastName)
+        : mutateName(person.firstName, person.lastName, rng);
       const suffix = Math.floor(rng() * 10000);
       return [
         {
@@ -189,6 +194,8 @@ function jitterStreet(street: string | null, rng: Rng): string | null {
 // Small hand-curated nickname table for Tier 2 fuzzy-name cases. Bidirectional:
 // if a key is found, swap to its partner. Not canonical — just enough variety
 // to produce recognizable nickname duplicates for Checkpoint 1 inspection.
+// Expanded in Session 6 (Gamma) to widen calibration coverage of the JW≈0.7-0.85
+// nickname band — the band that distinguishes the FS_PARAMS tuning sweet spot.
 const NICKNAMES: Record<string, string> = {
   joe: 'joseph', joseph: 'joe',
   liz: 'elizabeth', elizabeth: 'liz',
@@ -200,6 +207,18 @@ const NICKNAMES: Record<string, string> = {
   mike: 'michael', michael: 'mike',
   dave: 'david', david: 'dave',
   chris: 'christopher', christopher: 'chris',
+  // Session 6 additions — broaden first-name nickname coverage so the
+  // calibration corpus exercises the JW≈0.7-0.85 band that distinguishes
+  // the tuned FS_PARAMS sweet spot from looser/tighter configurations.
+  steve: 'steven', steven: 'steve',
+  matt: 'matthew', matthew: 'matt',
+  ben: 'benjamin', benjamin: 'ben',
+  sam: 'samuel', samuel: 'sam',
+  alex: 'alexander', alexander: 'alex',
+  kate: 'katherine', katherine: 'kate',
+  pat: 'patrick', patrick: 'pat',
+  nick: 'nicholas', nicholas: 'nick',
+  dan: 'daniel', daniel: 'dan',
 };
 
 const STREET_TYPES: Array<[long: string, short: string]> = [
@@ -258,6 +277,21 @@ export function mutateName(
     return { first: capitalize(singleCharEdit(firstLower, rng)), last };
   }
   return { first, last: capitalize(singleCharEdit(lastLower, rng)) };
+}
+
+/**
+ * Reverse first/last name fields to produce a Tier-2-fuzzy variant where the
+ * upstream CRM filled "first_name" with the surname (or vice versa). Common in
+ * messy SMB data — a sales rep types the name backwards once and the row
+ * persists. Jaro-Winkler on the normalized concatenated name lands ~0.5 on the
+ * reversed pair (verified in the Session 6 tuning script), which puts the pair
+ * in the review band when combined with shared email_domain + phone_prefix.
+ */
+export function reverseFirstLast(
+  first: string,
+  last: string,
+): { first: string; last: string } {
+  return { first: last, last: first };
 }
 
 /**
