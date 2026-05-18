@@ -16,7 +16,27 @@ import { generateProducts } from '@generators/products';
 import { generateOrders } from '@generators/orders';
 import { checkShopifyEnvironment, assertSandbox } from '@utils/safety';
 import { loadOrGenerateContacts } from '@utils/dataset-cache';
+import { createShopifyThrottle } from '@utils/shopify-throttle';
 import logger from '@utils/logger';
+
+/**
+ * Extract the `page_info` cursor from a Shopify Link header for the `rel="next"`
+ * segment specifically. Shopify emits Link headers like:
+ *   <URL?page_info=PREV>; rel="previous", <URL?page_info=NEXT>; rel="next"
+ * On any middle page, both rels are present. The previous "grab the first
+ * page_info= I see" approach silently followed the `previous` cursor and
+ * re-walked already-processed pages, leaving real records uncleaned. Returns
+ * undefined when there is no `rel="next"` segment (i.e. we're on the last page).
+ */
+export function parseShopifyNextPageInfo(link: string | undefined): string | undefined {
+  if (!link) return undefined;
+  for (const segment of link.split(',')) {
+    if (!/rel\s*=\s*"?next"?/i.test(segment)) continue;
+    const match = segment.match(/[?&]page_info=([^>&;\s]+)/);
+    if (match) return match[1];
+  }
+  return undefined;
+}
 
 export class ShopifySeeder extends BaseSeeder {
   private session: Session;
@@ -106,6 +126,7 @@ export class ShopifySeeder extends BaseSeeder {
     }
 
     const client = new this.shopify.clients.Rest({ session: this.session });
+    const { callWithRetry } = createShopifyThrottle('Shopify');
 
     // Create customers
     const customerIds: number[] = [];
@@ -130,10 +151,12 @@ export class ShopifySeeder extends BaseSeeder {
         note: `Seeded test data — ${seededAt}`,
       };
       const postCustomer = (includePhone: boolean) =>
-        client.post({
-          path: 'customers',
-          data: { customer: includePhone ? { ...baseCustomer, phone: contact.phone } : baseCustomer },
-        });
+        callWithRetry(() =>
+          client.post({
+            path: 'customers',
+            data: { customer: includePhone ? { ...baseCustomer, phone: contact.phone } : baseCustomer },
+          }),
+        );
 
       try {
         const response = await postCustomer(true);
@@ -165,25 +188,27 @@ export class ShopifySeeder extends BaseSeeder {
     const variantIds: number[] = [];
     for (const product of products) {
       try {
-        const response = await client.post({
-          path: 'products',
-          data: {
-            product: {
-              title: product.name,
-              body_html: `<p>${product.description}</p>`,
-              vendor: 'Seed Platform Data',
-              product_type: product.category,
-              tags: `${SEEDED_TAG},${SEEDED_AT_TAG}:${seededAt}`,
-              variants: [
-                {
-                  price: product.price.toFixed(2),
-                  sku: product.sku,
-                  inventory_management: null,
-                },
-              ],
+        const response = await callWithRetry(() =>
+          client.post({
+            path: 'products',
+            data: {
+              product: {
+                title: product.name,
+                body_html: `<p>${product.description}</p>`,
+                vendor: 'Seed Platform Data',
+                product_type: product.category,
+                tags: `${SEEDED_TAG},${SEEDED_AT_TAG}:${seededAt}`,
+                variants: [
+                  {
+                    price: product.price.toFixed(2),
+                    sku: product.sku,
+                    inventory_management: null,
+                  },
+                ],
+              },
             },
-          },
-        });
+          }),
+        );
         const shopifyProduct = (response.body as Record<string, Record<string, unknown>>).product;
         const variants = shopifyProduct.variants as Array<Record<string, unknown>>;
         if (variants?.[0]) {
@@ -214,17 +239,19 @@ export class ShopifySeeder extends BaseSeeder {
 
           if (lineItems.length === 0) continue;
 
-          await client.post({
-            path: 'draft_orders',
-            data: {
-              draft_order: {
-                line_items: lineItems,
-                customer: { id: customerId },
-                note: `Seeded test data — ${seededAt}`,
-                tags: SEEDED_TAG,
+          await callWithRetry(() =>
+            client.post({
+              path: 'draft_orders',
+              data: {
+                draft_order: {
+                  line_items: lineItems,
+                  customer: { id: customerId },
+                  note: `Seeded test data — ${seededAt}`,
+                  tags: SEEDED_TAG,
+                },
               },
-            },
-          });
+            }),
+          );
           created.orders++;
         } catch (error) {
           errors.push(`Order: ${error instanceof Error ? error.message : String(error)}`);
@@ -255,6 +282,7 @@ export class ShopifySeeder extends BaseSeeder {
     }
 
     const client = new this.shopify.clients.Rest({ session: this.session });
+    const { callWithRetry } = createShopifyThrottle('Shopify clean');
 
     // Delete seeded draft orders
     try {
@@ -264,7 +292,7 @@ export class ShopifySeeder extends BaseSeeder {
         const params: Record<string, string | number> = { limit: 250 };
         if (pageInfo) params.page_info = pageInfo;
 
-        const response = await client.get({ path: 'draft_orders', query: params });
+        const response = await callWithRetry(() => client.get({ path: 'draft_orders', query: params }));
         const draftOrders = (response.body as Record<string, unknown[]>).draft_orders ?? [];
 
         for (const draftOrder of draftOrders) {
@@ -272,17 +300,16 @@ export class ShopifySeeder extends BaseSeeder {
           const tags = (order.tags as string) ?? '';
           if (tags.includes(SEEDED_TAG)) {
             if (!options.dryRun) {
-              await client.delete({ path: `draft_orders/${order.id}` });
+              await callWithRetry(() => client.delete({ path: `draft_orders/${order.id}` }));
             }
             deleted.draft_orders++;
           }
         }
 
         const headers = response.headers as Record<string, string | string[]> | undefined;
-        const link = (typeof headers?.link === 'string' ? headers.link : '') ?? '';
-        const nextMatch = link.match(/page_info=([^>&]*)/);
-        hasMore = !!nextMatch && draftOrders.length === 250;
-        pageInfo = nextMatch?.[1];
+        const link = typeof headers?.link === 'string' ? headers.link : undefined;
+        pageInfo = parseShopifyNextPageInfo(link);
+        hasMore = !!pageInfo;
       }
     } catch (error) {
       errors.push(`Draft orders: ${error instanceof Error ? error.message : String(error)}`);
@@ -296,7 +323,7 @@ export class ShopifySeeder extends BaseSeeder {
         const params: Record<string, string | number> = { limit: 250 };
         if (pageInfo) params.page_info = pageInfo;
 
-        const response = await client.get({ path: 'products', query: params });
+        const response = await callWithRetry(() => client.get({ path: 'products', query: params }));
         const shopifyProducts = (response.body as Record<string, unknown[]>).products ?? [];
 
         for (const product of shopifyProducts) {
@@ -304,17 +331,16 @@ export class ShopifySeeder extends BaseSeeder {
           const tags = (p.tags as string) ?? '';
           if (tags.includes(SEEDED_TAG)) {
             if (!options.dryRun) {
-              await client.delete({ path: `products/${p.id}` });
+              await callWithRetry(() => client.delete({ path: `products/${p.id}` }));
             }
             deleted.products++;
           }
         }
 
         const headers = response.headers as Record<string, string | string[]> | undefined;
-        const link = (typeof headers?.link === 'string' ? headers.link : '') ?? '';
-        const nextMatch = link.match(/page_info=([^>&]*)/);
-        hasMore = !!nextMatch && shopifyProducts.length === 250;
-        pageInfo = nextMatch?.[1];
+        const link = typeof headers?.link === 'string' ? headers.link : undefined;
+        pageInfo = parseShopifyNextPageInfo(link);
+        hasMore = !!pageInfo;
       }
     } catch (error) {
       errors.push(`Products: ${error instanceof Error ? error.message : String(error)}`);
@@ -328,7 +354,7 @@ export class ShopifySeeder extends BaseSeeder {
         const params: Record<string, string | number> = { limit: 250 };
         if (pageInfo) params.page_info = pageInfo;
 
-        const response = await client.get({ path: 'customers', query: params });
+        const response = await callWithRetry(() => client.get({ path: 'customers', query: params }));
         const customers = (response.body as Record<string, unknown[]>).customers ?? [];
 
         for (const customer of customers) {
@@ -336,17 +362,16 @@ export class ShopifySeeder extends BaseSeeder {
           const tags = (c.tags as string) ?? '';
           if (tags.includes(SEEDED_TAG)) {
             if (!options.dryRun) {
-              await client.delete({ path: `customers/${c.id}` });
+              await callWithRetry(() => client.delete({ path: `customers/${c.id}` }));
             }
             deleted.customers++;
           }
         }
 
         const headers = response.headers as Record<string, string | string[]> | undefined;
-        const link = (typeof headers?.link === 'string' ? headers.link : '') ?? '';
-        const nextMatch = link.match(/page_info=([^>&]*)/);
-        hasMore = !!nextMatch && customers.length === 250;
-        pageInfo = nextMatch?.[1];
+        const link = typeof headers?.link === 'string' ? headers.link : undefined;
+        pageInfo = parseShopifyNextPageInfo(link);
+        hasMore = !!pageInfo;
       }
     } catch (error) {
       errors.push(`Customers: ${error instanceof Error ? error.message : String(error)}`);

@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { apiFetch, apiFetchMultipart } from '../lib/api';
+import { ApiError, apiFetch, apiFetchMultipart } from '../lib/api';
 import type {
+  CanonicalPerson,
+  DirtyContact,
   SimulationReport,
   SimulationRunOptions,
   SimulationRunState,
@@ -65,6 +67,47 @@ export function useUploadOiCsv() {
       qc.invalidateQueries({ queryKey: RUNS_KEY });
       qc.invalidateQueries({ queryKey: runKey(runId) });
     },
+  });
+}
+
+async function fetchArtifactJson<T>(runId: string, artifact: string): Promise<T> {
+  const res = await fetch(`/api/simulation/runs/${runId}/artifacts/${artifact}`);
+  if (!res.ok) {
+    let message = `Failed to load ${artifact}`;
+    try {
+      const body = await res.json();
+      message = body.error ?? message;
+    } catch {
+      // sendFile errors don't return JSON — fall back to status text
+      message = `${message} (${res.status})`;
+    }
+    throw new ApiError(message, res.status);
+  }
+  return (await res.json()) as T;
+}
+
+export interface InspectorDataset {
+  answerKey: CanonicalPerson[];
+  stripe: DirtyContact[];
+  hubspot: DirtyContact[];
+  shopify: DirtyContact[];
+}
+
+export function useInspectorDataset(runId: string | null) {
+  return useQuery({
+    queryKey: runId ? (['simulation', 'inspector', runId] as const) : ['simulation', 'inspector', 'idle'],
+    queryFn: async (): Promise<InspectorDataset> => {
+      if (!runId) throw new Error('runId required');
+      const [answerKey, stripe, hubspot, shopify] = await Promise.all([
+        fetchArtifactJson<CanonicalPerson[]>(runId, 'answer-key.json'),
+        fetchArtifactJson<DirtyContact[]>(runId, 'stripe-dirty.json'),
+        fetchArtifactJson<DirtyContact[]>(runId, 'hubspot-dirty.json'),
+        fetchArtifactJson<DirtyContact[]>(runId, 'shopify-dirty.json'),
+      ]);
+      return { answerKey, stripe, hubspot, shopify };
+    },
+    enabled: !!runId,
+    staleTime: Infinity,
   });
 }
 

@@ -4,9 +4,20 @@ export interface CanonicalPerson extends GeneratedContact {
   canonicalId: string;
 }
 
+/**
+ * Provenance of a dirty record relative to its canonical person.
+ * `canonical` — the base record (no duplicate / fuzzy mutation applied).
+ * `duplicate` — a Tier-1 duplicate (shares exact email or phone with canonical).
+ * `fuzzy`    — a Tier-2 fuzzy variant (nickname/typo name, abbreviated address,
+ *              mutated or different email, null phone). Used by the inspector
+ *              UI to sort dirtiest records first.
+ */
+export type DirtyRecordTier = 'canonical' | 'duplicate' | 'fuzzy';
+
 export interface DirtyContact {
   canonicalId: string;
   internalId: string;
+  tier: DirtyRecordTier;
   firstName: string | null;
   lastName: string | null;
   email: string | null;
@@ -82,6 +93,7 @@ export type MergeStatus = 'fully_merged' | 'under_merged' | 'over_merged' | 'mis
 
 export interface RecordResult {
   canonicalId: string;
+  canonicalEmail: string;
   internalId: string;
   platform: Platform;
   externalId: string;

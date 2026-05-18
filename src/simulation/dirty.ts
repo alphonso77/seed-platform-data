@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Platform } from '@/types';
-import { CanonicalPerson, DirtyContact, DirtyDatasets } from '@/simulation/types';
+import { CanonicalPerson, DirtyContact, DirtyDatasets, DirtyRecordTier } from '@/simulation/types';
 
 export interface DirtyOptions {
   fragment: boolean;
@@ -17,6 +17,15 @@ interface PlatformConfig {
   /** Emits records that miss Tier 1 but share enough fuzzy signal for Tier 2. */
   fuzzyDuplicate: (person: CanonicalPerson, rng: Rng) => Partial<DirtyContact>[];
   fuzzyDuplicateRate: number;
+  /**
+   * Whether the destination platform enforces unique customer email at write
+   * time. HubSpot uses email as the primary contact identifier; Shopify rejects
+   * duplicate emails per store with a 422. Stripe allows duplicate emails.
+   * When true, a final dedup pass mutates colliding emails so the upload
+   * succeeds — within-canonical intentional duplicates aren't affected because
+   * each platform's `duplicate` strategy already avoids same-email pairs.
+   */
+  requiresUniqueEmail: boolean;
 }
 
 type Rng = () => number;
@@ -40,7 +49,7 @@ function emptyAddress(): DirtyContact['address'] {
   return { street: null, city: null, state: null, zip: null, country: null };
 }
 
-function fullContact(person: CanonicalPerson): Omit<DirtyContact, 'canonicalId' | 'internalId'> {
+function fullContact(person: CanonicalPerson): Omit<DirtyContact, 'canonicalId' | 'internalId' | 'tier'> {
   return {
     firstName: person.firstName,
     lastName: person.lastName,
@@ -54,11 +63,13 @@ function fullContact(person: CanonicalPerson): Omit<DirtyContact, 'canonicalId' 
 
 function makeRecord(
   person: CanonicalPerson,
+  tier: DirtyRecordTier,
   overrides: Partial<DirtyContact>,
 ): DirtyContact {
   return {
     canonicalId: person.canonicalId,
     internalId: uuidv4(),
+    tier,
     ...fullContact(person),
     ...overrides,
   };
@@ -114,6 +125,7 @@ const PLATFORMS: Record<keyof DirtyDatasets, PlatformConfig> = {
       },
     ],
     fuzzyDuplicateRate: 0.15,
+    requiresUniqueEmail: true,
   },
   stripe: {
     fragment: (person, rng) => [pick(rng, STRIPE_FRAGMENTS)()],
@@ -140,6 +152,7 @@ const PLATFORMS: Record<keyof DirtyDatasets, PlatformConfig> = {
       ];
     },
     fuzzyDuplicateRate: 0.15,
+    requiresUniqueEmail: false,
   },
   shopify: {
     fragment: (person, rng) => [pick(rng, SHOPIFY_FRAGMENTS)()],
@@ -171,8 +184,37 @@ const PLATFORMS: Record<keyof DirtyDatasets, PlatformConfig> = {
       ];
     },
     fuzzyDuplicateRate: 0.15,
+    requiresUniqueEmail: true,
   },
 };
+
+/**
+ * Ensure no two records in the array share an email (case-insensitive).
+ * Records with a null email are left alone — they don't collide with anything.
+ * The first occurrence of an email keeps it; later collisions get a
+ * deterministic `.dedupN` suffix on the local part. The same `internalId` and
+ * `canonicalId` are preserved, so the answer-key linkage stays intact.
+ */
+function enforceUniqueEmail(records: DirtyContact[]): DirtyContact[] {
+  const seen = new Set<string>();
+  let counter = 0;
+  return records.map((record) => {
+    if (!record.email) return record;
+    const lower = record.email.toLowerCase();
+    if (!seen.has(lower)) {
+      seen.add(lower);
+      return record;
+    }
+    const [local, domain] = record.email.split('@');
+    let candidate = '';
+    do {
+      counter += 1;
+      candidate = `${local}.dedup${counter}@${domain ?? 'example.com'}`;
+    } while (seen.has(candidate.toLowerCase()));
+    seen.add(candidate.toLowerCase());
+    return { ...record, email: candidate };
+  });
+}
 
 function mutateEmail(email: string, rng: Rng): string {
   const [local, domain] = email.split('@');
@@ -362,16 +404,23 @@ function buildPlatformRecords(
         ? config.fuzzyDuplicate(person, rng)
         : [];
 
-    for (const variant of [...variants, ...fuzzyVariants]) {
+    // Tier labels: when duplicate() fires it returns [{}, ...realDups] — the
+    // first entry is the canonical base and any subsequent entries are Tier-1
+    // duplicates. Fuzzy variants are always Tier-2.
+    variants.forEach((variant, idx) => {
+      const tier: DirtyRecordTier = isDuplicated && idx > 0 ? 'duplicate' : 'canonical';
       const fragment = options.fragment ? config.fragment(person, rng)[0] : {};
-      // Variant overrides come second so duplication patterns (e.g. email mutation) win
-      // over generic fragmentation drops.
-      const record = makeRecord(person, { ...fragment, ...variant });
+      const record = makeRecord(person, tier, { ...fragment, ...variant });
+      out.push(ensureContactable(record, { email: person.email, phone: person.phone }));
+    });
+    for (const variant of fuzzyVariants) {
+      const fragment = options.fragment ? config.fragment(person, rng)[0] : {};
+      const record = makeRecord(person, 'fuzzy', { ...fragment, ...variant });
       out.push(ensureContactable(record, { email: person.email, phone: person.phone }));
     }
   }
 
-  return out;
+  return config.requiresUniqueEmail ? enforceUniqueEmail(out) : out;
 }
 
 export function generateDirtyDatasets(

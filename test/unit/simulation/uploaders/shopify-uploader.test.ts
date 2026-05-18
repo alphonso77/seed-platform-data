@@ -1,5 +1,33 @@
 import { expect } from 'chai';
 import { normalizeToE164 } from '../../../../src/simulation/uploaders/shopify-uploader';
+import { isShopifyThrottleError } from '../../../../src/utils/shopify-throttle';
+
+describe('utils/shopify-throttle isShopifyThrottleError', () => {
+  it('matches the leaky-bucket throttle message', () => {
+    expect(
+      isShopifyThrottleError(
+        new Error(
+          'Shopify is throttling requests : "Exceeded 2 calls per second for api client. Reduce request rates to resume uninterrupted service."',
+        ),
+      ),
+    ).to.be.true;
+  });
+
+  it('does not match the "email has already been taken" 422', () => {
+    expect(
+      isShopifyThrottleError(
+        new Error(
+          'Received an error response (422 Unprocessable Entity) from Shopify: { "email": [ "has already been taken" ] }',
+        ),
+      ),
+    ).to.be.false;
+  });
+
+  it('handles non-Error throwables', () => {
+    expect(isShopifyThrottleError('Shopify is throttling requests')).to.be.true;
+    expect(isShopifyThrottleError(null)).to.be.false;
+  });
+});
 
 describe('simulation/uploaders/shopify normalizeToE164', () => {
   it('formats a 10-digit US national number as +1XXXXXXXXXX', () => {

@@ -213,6 +213,52 @@ describe('simulation/dirty', () => {
     });
   });
 
+  describe('per-platform email uniqueness', () => {
+    it('hubspot and shopify dirty datasets never emit duplicate emails', () => {
+      // Scan a handful of seeds with all generation paths on, including fuzzy,
+      // to surface any cross-canonical collision that the per-platform dedup
+      // pass would have to mutate away.
+      for (let seed = 1; seed < 20; seed++) {
+        const dirty = generateDirtyDatasets(answerKey, {
+          fragment: true,
+          duplicate: true,
+          fuzzy: true,
+          seed,
+        });
+        for (const platform of ['hubspot', 'shopify'] as const) {
+          const emails = dirty[platform]
+            .map((r) => r.email?.toLowerCase())
+            .filter((e): e is string => !!e);
+          expect(new Set(emails).size, `${platform} seed=${seed} had duplicate emails`).to.equal(
+            emails.length,
+          );
+        }
+      }
+    });
+
+    it('stripe still emits duplicate emails when intentional Tier-1 duplication fires', () => {
+      // Stripe's Tier-1 dup strategy is "same email, different attributes". The
+      // dedup pass must NOT run for stripe, otherwise the test corpus loses
+      // its exact-email duplicate signal.
+      let foundDup = false;
+      for (let seed = 1; seed < 50 && !foundDup; seed++) {
+        const dirty = generateDirtyDatasets(answerKey, {
+          fragment: false,
+          duplicate: true,
+          seed,
+        });
+        const counts = new Map<string, number>();
+        for (const r of dirty.stripe) {
+          if (!r.email) continue;
+          counts.set(r.email, (counts.get(r.email) ?? 0) + 1);
+        }
+        foundDup = Array.from(counts.values()).some((n) => n > 1);
+      }
+      expect(foundDup, 'expected at least one Stripe exact-email duplicate within 50 seeds').to.be
+        .true;
+    });
+  });
+
   describe('mutateName', () => {
     // Use a tiny deterministic rng for unit tests.
     function rngFrom(values: number[]): () => number {

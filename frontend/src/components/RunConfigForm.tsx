@@ -24,8 +24,8 @@ export function RunConfigForm({ onSubmit, isLoading }: Props) {
   const [size, setSize] = useState<DatasetSize>('small');
   const [fragment, setFragment] = useState(true);
   const [duplicate, setDuplicate] = useState(true);
-  const [fuzzy, setFuzzy] = useState(false);
-  const [platforms, setPlatforms] = useState<Platform[]>(ALL_PLATFORMS);
+  const [fuzzy, setFuzzy] = useState(true);
+  const [platforms, setPlatforms] = useState<Platform[]>(['stripe', 'hubspot', 'shopify']);
 
   const togglePlatform = (p: Platform) => {
     setPlatforms((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]));
@@ -95,10 +95,10 @@ export function RunConfigForm({ onSubmit, isLoading }: Props) {
           })}
         </div>
         <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
-          Disable any platform whose ingestion isn&apos;t wired up yet — including Shopify if its
-          app is still under review. Records for skipped platforms aren&apos;t uploaded and don&apos;t
-          appear in the answer-key expectations, so the grade reflects only the platforms you
-          actually tested. At least one platform must be selected.
+          Stripe and HubSpot are selected by default; Shopify is opt-in because its app is
+          frequently still pending review. Records for skipped platforms aren&apos;t uploaded and
+          don&apos;t appear in the answer-key expectations, so the grade reflects only the
+          platforms you actually tested. At least one platform must be selected.
         </div>
       </div>
 

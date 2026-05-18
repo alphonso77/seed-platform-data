@@ -12,6 +12,7 @@ function record(overrides: Partial<DirtyContact> = {}): DirtyContact {
   return {
     canonicalId: 'canon-1',
     internalId: 'int-1',
+    tier: 'canonical',
     firstName: 'Ada',
     lastName: 'Lovelace',
     email: 'ada@example.com',

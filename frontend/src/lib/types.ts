@@ -99,12 +99,51 @@ export type MergeStatus = 'fully_merged' | 'under_merged' | 'over_merged' | 'mis
 
 export interface RecordResult {
   canonicalId: string;
+  canonicalEmail: string;
   internalId: string;
   platform: Platform;
   externalId: string;
   dnaRecordId: string | null;
   pass: boolean;
   mergeStatus: MergeStatus;
+}
+
+export type DirtyRecordTier = 'canonical' | 'duplicate' | 'fuzzy';
+
+export interface DirtyContact {
+  canonicalId: string;
+  internalId: string;
+  tier: DirtyRecordTier;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+  phone: string | null;
+  company: string | null;
+  jobTitle: string | null;
+  address: {
+    street: string | null;
+    city: string | null;
+    state: string | null;
+    zip: string | null;
+    country: string | null;
+  } | null;
+}
+
+export interface CanonicalPerson {
+  canonicalId: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  company: string;
+  jobTitle: string;
+  address: {
+    street: string;
+    city: string;
+    state: string;
+    zip: string;
+    country: string;
+  };
 }
 
 export interface CanonicalResult {

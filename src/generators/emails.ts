@@ -32,8 +32,12 @@ export function generateEmail(
 
   let email = `${first}.${last}@${domain}`;
 
-  if (usedEmails.has(email)) {
-    const suffix = faker.number.int({ min: 100, max: 999 });
+  // Loop until the candidate is unique. The previous one-shot suffix had only
+  // 900 buckets, so on runs with ~250+ canonicals two records with the same
+  // sanitized name pair could pick the same suffix → identical email → e.g.
+  // Shopify rejects the second with 422 "email has already been taken".
+  while (usedEmails.has(email)) {
+    const suffix = faker.number.int({ min: 100, max: 999999 });
     email = `${first}.${last}${suffix}@${domain}`;
   }
 

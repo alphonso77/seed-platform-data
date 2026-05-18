@@ -4,6 +4,7 @@ import { OiCsvDropzone } from '../components/OiCsvDropzone';
 import { PassFailReport } from '../components/PassFailReport';
 import { RunArtifactsPanel } from '../components/RunArtifactsPanel';
 import { RunConfigForm } from '../components/RunConfigForm';
+import { RunDataInspector } from '../components/RunDataInspector';
 import { RunsList } from '../components/RunsList';
 import {
   useGenerateReport,
@@ -35,7 +36,7 @@ export function SimulationPage() {
   const reportData = runQuery.data?.report;
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="mx-auto max-w-4xl xl:max-w-7xl">
       <div className="mb-2">
         <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Identity Resolution Simulation</h2>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -85,6 +86,8 @@ export function SimulationPage() {
             </header>
 
             <RunArtifactsPanel runId={summary.runId} stage={summary.stage} />
+
+            <RunDataInspector runId={summary.runId} />
 
             {summary.stage === 'generated' && (
               <div className="mt-4">

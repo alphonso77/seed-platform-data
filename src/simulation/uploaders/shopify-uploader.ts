@@ -11,9 +11,10 @@ import {
 import { DirtyContact, UploadMappingEntry } from '@/simulation/types';
 import { checkShopifyEnvironment } from '@utils/safety';
 import logger from '@utils/logger';
+import { createShopifyThrottle } from '@utils/shopify-throttle';
 import { BaseUploader, promisePool } from '@/simulation/uploaders/base-uploader';
 
-const SHOPIFY_CONCURRENCY = 5;
+const SHOPIFY_CONCURRENCY = 2;
 
 export class ShopifyUploader extends BaseUploader {
   private session: Session;
@@ -82,12 +83,16 @@ export class ShopifyUploader extends BaseUploader {
     const mappings: UploadMappingEntry[] = [];
     const client = new this.shopify.clients.Rest({ session: this.session });
 
+    const { callWithRetry } = createShopifyThrottle('Shopify simulation');
+
     const outcomes = await promisePool(records, SHOPIFY_CONCURRENCY, async (record) => {
       const post = (includePhone: boolean) =>
-        client.post({
-          path: 'customers',
-          data: { customer: buildCustomerBody(record, runId, seededAt, includePhone) },
-        });
+        callWithRetry(() =>
+          client.post({
+            path: 'customers',
+            data: { customer: buildCustomerBody(record, runId, seededAt, includePhone) },
+          }),
+        );
 
       try {
         const response = await post(true);

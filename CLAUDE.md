@@ -2,7 +2,7 @@
 
 ## What is this project?
 
-Seed Platform Data — a standalone CLI + web UI tool for seeding realistic test data into HubSpot, Stripe, and Shopify sandbox environments. Used to prove out integrations in the integrasentry product.
+Seed Platform Data — a standalone CLI + web UI tool for seeding realistic test data into HubSpot, Stripe, and Shopify sandbox environments. Used as a grading harness for Fratelli Software (organic intelligence, and BS Machine.).
 
 ## Commands
 

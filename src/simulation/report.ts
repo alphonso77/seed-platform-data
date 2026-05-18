@@ -27,6 +27,12 @@ function platformKey(platform: string, externalId: string): string {
 export function generateReport(input: GenerateReportInput): Report {
   const { runId, answerKey, uploadMapping, oiRows } = input;
 
+  // Index canonical email by canonicalId so each RecordResult carries the
+  // canonical's email — used by the report UI to let a demo'er paste the
+  // email straight into the upstream OI lookup.
+  const emailByCanonical = new Map<string, string>();
+  for (const p of answerKey) emailByCanonical.set(p.canonicalId, p.email);
+
   // Index uploaded records by platform+externalId for O(1) join with OI rows.
   const mappingByExternal = new Map<string, UploadMappingEntry>();
   for (const m of uploadMapping) {
@@ -108,6 +114,7 @@ export function generateReport(input: GenerateReportInput): Report {
     for (const m of expected) {
       records.push({
         canonicalId: m.canonicalId,
+        canonicalEmail: emailByCanonical.get(m.canonicalId) ?? '',
         internalId: m.internalId,
         platform: m.platform,
         externalId: m.externalId,
@@ -194,6 +201,7 @@ function pairwiseMetrics(
 export function reportToCsv(report: Report): string {
   const header = [
     'canonical_id',
+    'canonical_email',
     'platform',
     'internal_id',
     'external_id',
@@ -206,6 +214,7 @@ export function reportToCsv(report: Report): string {
     lines.push(
       [
         r.canonicalId,
+        r.canonicalEmail,
         r.platform,
         r.internalId,
         r.externalId,

@@ -27,7 +27,16 @@ describe('Email Generator', () => {
       const email2 = generateEmail('John', 'Doe', { domains: ['test.com'], domainIndex: 0 });
       expect(email1).to.equal('john.doe@test.com');
       expect(email2).to.not.equal(email1);
-      expect(email2).to.match(/john\.doe\d{3}@test\.com/);
+      expect(email2).to.match(/john\.doe\d+@test\.com/);
+    });
+
+    it('guarantees uniqueness across many same-name collisions', () => {
+      const count = 500;
+      const seen = new Set<string>();
+      for (let i = 0; i < count; i++) {
+        seen.add(generateEmail('John', 'Doe', { domains: ['test.com'], domainIndex: 0 }));
+      }
+      expect(seen.size).to.equal(count);
     });
 
     it('should sanitize names', () => {

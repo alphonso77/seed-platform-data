@@ -83,6 +83,7 @@ export function PassFailReport({ report }: Props) {
               <th className="px-3 py-2">Platform</th>
               <th className="px-3 py-2">External ID</th>
               <th className="px-3 py-2">Canonical</th>
+              <th className="px-3 py-2">Canonical email</th>
               <th className="px-3 py-2">DNA record</th>
               <th className="px-3 py-2">Status</th>
               <th className="px-3 py-2">Result</th>
@@ -95,6 +96,9 @@ export function PassFailReport({ report }: Props) {
                 <td className="px-3 py-2 font-mono text-xs">{r.externalId}</td>
                 <td className="px-3 py-2 font-mono text-xs opacity-70">
                   {r.canonicalId.slice(0, 8)}…
+                </td>
+                <td className="px-3 py-2 font-mono text-xs text-gray-700 dark:text-gray-300">
+                  {r.canonicalEmail || '—'}
                 </td>
                 <td className="px-3 py-2 font-mono text-xs opacity-70">
                   {r.dnaRecordId ? `${r.dnaRecordId.slice(0, 8)}…` : '—'}
@@ -117,7 +121,7 @@ export function PassFailReport({ report }: Props) {
             ))}
             {filtered.length === 0 && (
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-xs text-gray-400">
+                <td colSpan={7} className="px-3 py-6 text-center text-xs text-gray-400">
                   No records match this filter.
                 </td>
               </tr>
