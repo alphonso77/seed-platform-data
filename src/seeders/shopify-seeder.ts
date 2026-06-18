@@ -300,7 +300,14 @@ export class ShopifySeeder extends BaseSeeder {
           const tags = (order.tags as string) ?? '';
           if (tags.includes(SEEDED_TAG)) {
             if (!options.dryRun) {
-              await callWithRetry(() => client.delete({ path: `draft_orders/${order.id}` }));
+              try {
+                await callWithRetry(() => client.delete({ path: `draft_orders/${order.id}` }));
+              } catch (error) {
+                errors.push(
+                  `Draft order ${order.id}: ${error instanceof Error ? error.message : String(error)}`,
+                );
+                continue;
+              }
             }
             deleted.draft_orders++;
           }
@@ -331,7 +338,14 @@ export class ShopifySeeder extends BaseSeeder {
           const tags = (p.tags as string) ?? '';
           if (tags.includes(SEEDED_TAG)) {
             if (!options.dryRun) {
-              await callWithRetry(() => client.delete({ path: `products/${p.id}` }));
+              try {
+                await callWithRetry(() => client.delete({ path: `products/${p.id}` }));
+              } catch (error) {
+                errors.push(
+                  `Product ${p.id}: ${error instanceof Error ? error.message : String(error)}`,
+                );
+                continue;
+              }
             }
             deleted.products++;
           }
@@ -362,7 +376,17 @@ export class ShopifySeeder extends BaseSeeder {
           const tags = (c.tags as string) ?? '';
           if (tags.includes(SEEDED_TAG)) {
             if (!options.dryRun) {
-              await callWithRetry(() => client.delete({ path: `customers/${c.id}` }));
+              try {
+                await callWithRetry(() => client.delete({ path: `customers/${c.id}` }));
+              } catch (error) {
+                // Shopify returns 422 when a customer has real orders, an open
+                // GDPR request, or other constraints that prevent deletion.
+                // Record it and move on so one bad row doesn't abort the loop.
+                errors.push(
+                  `Customer ${c.id} (${c.email ?? 'no email'}): ${error instanceof Error ? error.message : String(error)}`,
+                );
+                continue;
+              }
             }
             deleted.customers++;
           }

@@ -173,6 +173,7 @@ Notes:
 
 Notes:
 - Orders are created as draft orders, not completed orders — completing an order requires a payment flow that's not appropriate for seeded test data.
+- **`clean shopify` triggers a `customers/redact` webhook per deleted customer.** The cleaner calls `DELETE /admin/api/<version>/customers/<id>.json` for each `_seeded`-tagged customer (`src/seeders/shopify-seeder.ts:380`). Empirically (verified 2026-05-16), Shopify treats this as a privacy-redact event and fires `customers/redact` for each deleted customer, with no 10-day delay on dev/test stores (production delay presumed but unverified). Any app subscribed to compliance webhooks on the same store receives one delivery per deleted customer at ~7/min — a 1000-customer clean produces a 1000-delivery storm. If that consumer's redact handler purges local copies of those customers (e.g. FratelliSoftware's does — see its `CLAUDE.md` gotcha #64), `clean shopify` cascades from upstream Shopify into every subscribed app's local DB. The GDPR contract working correctly, but worth knowing before running large cleans on shared dev stores.
 
 ---
 

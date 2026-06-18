@@ -17,6 +17,7 @@ import {
 
 export function SimulationPage() {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [showRegrade, setShowRegrade] = useState(false);
 
   const runsQuery = useRuns();
   const runQuery = useRun(selectedRunId);
@@ -31,9 +32,26 @@ export function SimulationPage() {
     if (generate.data) setSelectedRunId(generate.data.runId);
   }, [generate.data]);
 
+  // Collapse the re-grade panel when switching between runs.
+  useEffect(() => {
+    setShowRegrade(false);
+  }, [selectedRunId]);
+
   const summary = runQuery.data?.summary;
   const uploadResult = runQuery.data?.upload;
   const reportData = runQuery.data?.report;
+
+  // Re-grade: replace the OI result CSV, then recompute the report. Both endpoints
+  // overwrite unconditionally, so this works on an already-reported run.
+  async function handleRegrade(runId: string, file: File) {
+    try {
+      await uploadCsv.mutateAsync({ runId, file });
+      await report.mutateAsync(runId);
+      setShowRegrade(false);
+    } catch {
+      // Surfaced via uploadCsv.error / report.error below.
+    }
+  }
 
   return (
     <div className="mx-auto max-w-4xl xl:max-w-7xl">
@@ -169,11 +187,65 @@ export function SimulationPage() {
             </section>
           )}
 
-          {/* Stage 4: reported — show pass/fail */}
-          {summary.stage === 'reported' && reportData && (
+          {/* Stage 4: reported — show pass/fail and allow re-upload / re-grade */}
+          {summary.stage === 'reported' && (
             <section className="rounded-xl border border-gray-200 bg-white p-6 dark:border-gray-700 dark:bg-gray-900/50">
-              <h3 className="mb-4 text-lg font-semibold text-gray-900 dark:text-white">Pass/fail report</h3>
-              <PassFailReport report={reportData} />
+              <header className="mb-4 flex items-center justify-between gap-3">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Pass/fail report</h3>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={upload.isPending || uploadCsv.isPending || report.isPending}
+                    onClick={() => upload.mutate(summary.runId)}
+                    className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                  >
+                    {upload.isPending ? 'Re-uploading…' : 'Re-upload all'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={upload.isPending}
+                    onClick={() => setShowRegrade((v) => !v)}
+                    className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                  >
+                    {showRegrade ? 'Cancel' : 'Re-grade'}
+                  </button>
+                </div>
+              </header>
+
+              {upload.isPending && (
+                <p className="mb-4 rounded-lg border border-teal-500/30 bg-teal-500/5 px-3 py-2 text-xs text-gray-600 dark:text-gray-300">
+                  Re-uploading dirty data to all selected platforms… this can take a minute.
+                </p>
+              )}
+              {upload.error && <ErrorBox error={upload.error} />}
+
+              {showRegrade && (
+                <div className="mb-6 rounded-lg border border-teal-500/30 bg-teal-500/5 p-4">
+                  <p className="mb-3 text-sm text-gray-700 dark:text-gray-200">
+                    Run Organic Intelligence again, then upload the new result CSV to re-grade.
+                    This replaces the previous OI result and report for this run.
+                  </p>
+                  <OiCsvDropzone
+                    isLoading={uploadCsv.isPending || report.isPending}
+                    onUpload={(file) => handleRegrade(summary.runId, file)}
+                  />
+                  {(uploadCsv.isPending || report.isPending) && (
+                    <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+                      {uploadCsv.isPending ? 'Uploading result CSV…' : 'Computing report…'}
+                    </p>
+                  )}
+                  {uploadCsv.error && <ErrorBox error={uploadCsv.error} />}
+                  {report.error && <ErrorBox error={report.error} />}
+                </div>
+              )}
+
+              {reportData ? (
+                <PassFailReport report={reportData} />
+              ) : (
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  No report on disk for this run. Click <strong>Re-grade</strong> above to upload a result.
+                </p>
+              )}
             </section>
           )}
         </div>
