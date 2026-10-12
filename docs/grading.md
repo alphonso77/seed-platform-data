@@ -35,6 +35,10 @@ For `under_merged` and `over_merged` canonicals, the report adds a `dnaBreakdown
 - **`src/simulation/uploaders/{stripe,hubspot,shopify}-uploader.ts`** — produce the upload mapping (canonicalId → internalId → externalId), persisted to `upload-result.json`.
 - **`src/simulation/dirty.ts`** — `generateDirtyDatasets()` produces the per-platform fragmentation + duplication patterns the answer key gets exercised against. **HubSpot's duplicate emits a mutated email + matching phone** — that's the pattern that exposes cross-marker resolver bugs (resolver sees email_A→DNA-1, phone_X→DNA-2, and may silently pick one).
 
+## Reading results: email domains are stronger evidence here than in production
+
+The answer key gives every person their own hashed domain (`firstname.lastname@{8-hex}.example.com`), so no two people in a run share an email domain. In the sim, `email_domain` agreement therefore identifies a person almost on its own. In production a shared domain usually means "same company" (or a free-mail provider) and says little about identity. A merge in the sim that rests mainly on domain agreement (e.g. a Tier 2 fuzzy record with a mutated local part, no phone and no address) is weak evidence that the resolver would make the same call correctly on real data.
+
 ## Orchestration
 
 - **`src/commands/simulate.ts`** — `runReport(runId)` loads `answerKey`, `upload-result.json`, and the OI CSV, calls `generateReport()`, persists `report.json` + `report.csv`.

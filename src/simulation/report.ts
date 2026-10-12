@@ -8,6 +8,7 @@ import {
   OiResultRow,
   RecordResult,
   Report,
+  ReviewQueueEdge,
   UploadMappingEntry,
 } from '@/simulation/types';
 
@@ -16,6 +17,11 @@ export interface GenerateReportInput {
   answerKey: CanonicalPerson[];
   uploadMapping: UploadMappingEntry[];
   oiRows: OiResultRow[];
+  /**
+   * `oi.match_review_queue` rows for the run's org. Omit when the queue was
+   * not checked; split canonicals then grade `under_merged` as before.
+   */
+  reviewQueue?: ReviewQueueEdge[];
 }
 
 const PLATFORMS: Platform[] = ['stripe', 'hubspot', 'shopify'];
@@ -25,7 +31,7 @@ function platformKey(platform: string, externalId: string): string {
 }
 
 export function generateReport(input: GenerateReportInput): Report {
-  const { runId, answerKey, uploadMapping, oiRows } = input;
+  const { runId, answerKey, uploadMapping, oiRows, reviewQueue } = input;
 
   // Index canonical email by canonicalId so each RecordResult carries the
   // canonical's email — used by the report UI to let a demo'er paste the
@@ -77,6 +83,21 @@ export function generateReport(input: GenerateReportInput): Report {
     canonicalsByDna.set(dna, set);
   }
 
+  // Each queue row links the DNA its raw record landed in with the candidate
+  // DNA it was scored against. Pending and approved rows count as a deferred
+  // merge; rejected rows are only reported.
+  const dnaByRawRecordId = new Map<string, string>();
+  for (const row of oiRows) {
+    if (row.dnaRecordId) dnaByRawRecordId.set(row.rawRecordId, row.dnaRecordId);
+  }
+  const queueLinks = (reviewQueue ?? [])
+    .map((edge) => ({ edge, rawDna: dnaByRawRecordId.get(edge.rawRecordId) }))
+    .filter((l): l is { edge: ReviewQueueEdge; rawDna: string } => l.rawDna != null);
+  const deferredUnion = new UnionFind();
+  for (const { edge, rawDna } of queueLinks) {
+    if (edge.status !== 'rejected') deferredUnion.union(rawDna, edge.candidateDnaRecordId);
+  }
+
   const canonicals: CanonicalResult[] = [];
   const records: RecordResult[] = [];
 
@@ -89,7 +110,8 @@ export function generateReport(input: GenerateReportInput): Report {
     if (expected.length === 0 || found.length < expected.length || dnaIds.length === 0) {
       status = 'missing';
     } else if (dnaIds.length > 1) {
-      status = 'under_merged';
+      const roots = new Set(dnaIds.map((d) => deferredUnion.find(d)));
+      status = roots.size === 1 ? 'deferred_review' : 'under_merged';
     } else {
       const dna = dnaIds[0];
       const sharedWith = canonicalsByDna.get(dna);
@@ -97,10 +119,20 @@ export function generateReport(input: GenerateReportInput): Report {
       status = mergedWithOthers ? 'over_merged' : 'fully_merged';
     }
 
+    const isSplit = status === 'under_merged' || status === 'deferred_review';
     const dnaBreakdown =
-      status === 'under_merged' || status === 'over_merged'
+      isSplit || status === 'over_merged'
         ? buildDnaBreakdown(expected, dnaByInternalId, oiByPlatformKey)
         : undefined;
+    const ownDnas = new Set(dnaIds);
+    const reviewPairs = isSplit
+      ? queueLinks
+          .filter(({ edge, rawDna }) =>
+            rawDna !== edge.candidateDnaRecordId &&
+            ownDnas.has(rawDna) &&
+            ownDnas.has(edge.candidateDnaRecordId))
+          .map(({ edge }) => edge)
+      : [];
 
     canonicals.push({
       canonicalId: person.canonicalId,
@@ -109,6 +141,7 @@ export function generateReport(input: GenerateReportInput): Report {
       foundRecords: found.length,
       dnaRecordIds: dnaIds,
       ...(dnaBreakdown && dnaBreakdown.length > 0 ? { dnaBreakdown } : {}),
+      ...(reviewPairs.length > 0 ? { reviewPairs } : {}),
     });
 
     for (const m of expected) {
@@ -125,7 +158,14 @@ export function generateReport(input: GenerateReportInput): Report {
     }
   }
 
-  const summary = computeSummary(canonicals, records, uploadMapping, dnaByInternalId);
+  const summary = computeSummary(
+    canonicals,
+    records,
+    uploadMapping,
+    dnaByInternalId,
+    deferredUnion,
+    reviewQueue !== undefined,
+  );
 
   return {
     runId,
@@ -141,21 +181,29 @@ function computeSummary(
   records: RecordResult[],
   mapping: UploadMappingEntry[],
   dnaByInternalId: Map<string, string | null>,
+  deferredUnion: UnionFind,
+  reviewQueueChecked: boolean,
 ): Report['summary'] {
   const fullyMerged = canonicals.filter((c) => c.mergeStatus === 'fully_merged').length;
   const underMerged = canonicals.filter((c) => c.mergeStatus === 'under_merged').length;
+  const deferredReview = canonicals.filter((c) => c.mergeStatus === 'deferred_review').length;
   const overMerged = canonicals.filter((c) => c.mergeStatus === 'over_merged').length;
   const missing = canonicals.filter((c) => c.mergeStatus === 'missing').length;
 
   const recordsPassed = records.filter((r) => r.pass).length;
   const recordsFailed = records.length - recordsPassed;
 
-  const { precision, recall } = pairwiseMetrics(mapping, dnaByInternalId);
+  const { precision, recall } = pairwiseMetrics(mapping, (id) => dnaByInternalId.get(id));
+  const { recall: recallWithDeferred } = pairwiseMetrics(mapping, (id) => {
+    const dna = dnaByInternalId.get(id);
+    return dna == null ? dna : deferredUnion.find(dna);
+  });
 
   return {
     canonicalCount: canonicals.length,
     fullyMerged,
     underMerged,
+    deferredReview,
     overMerged,
     missing,
     recordsTotal: records.length,
@@ -163,12 +211,16 @@ function computeSummary(
     recordsFailed,
     precision,
     recall,
+    recallWithDeferred,
+    reviewQueueChecked,
   };
 }
 
+// `dnaOf` maps a record to the DNA it is grouped under; passing the deferred
+// union's root instead of the raw DNA gives recall with deferred pairs merged.
 function pairwiseMetrics(
   mapping: UploadMappingEntry[],
-  dnaByInternalId: Map<string, string | null>,
+  dnaOf: (internalId: string) => string | null | undefined,
 ): { precision: number; recall: number } {
   let truePositives = 0;
   let falsePositives = 0;
@@ -179,8 +231,8 @@ function pairwiseMetrics(
       const a = mapping[i];
       const b = mapping[j];
       const sameCanonical = a.canonicalId === b.canonicalId;
-      const dnaA = dnaByInternalId.get(a.internalId);
-      const dnaB = dnaByInternalId.get(b.internalId);
+      const dnaA = dnaOf(a.internalId);
+      const dnaB = dnaOf(b.internalId);
       const sameDna = dnaA != null && dnaA === dnaB;
 
       if (sameCanonical && sameDna) truePositives += 1;
@@ -220,7 +272,7 @@ export function reportToCsv(report: Report): string {
         r.externalId,
         r.dnaRecordId ?? '',
         r.mergeStatus,
-        r.pass ? 'pass' : 'fail',
+        r.pass ? 'pass' : r.mergeStatus === 'deferred_review' ? 'deferred' : 'fail',
       ]
         .map(csvCell)
         .join(','),
@@ -234,6 +286,25 @@ function csvCell(value: string): string {
     return `"${value.replace(/"/g, '""')}"`;
   }
   return value;
+}
+
+class UnionFind {
+  private parent = new Map<string, string>();
+
+  find(id: string): string {
+    let root = id;
+    while (this.parent.has(root) && this.parent.get(root) !== root) {
+      root = this.parent.get(root) as string;
+    }
+    this.parent.set(id, root);
+    return root;
+  }
+
+  union(a: string, b: string): void {
+    const ra = this.find(a);
+    const rb = this.find(b);
+    if (ra !== rb) this.parent.set(ra, rb);
+  }
 }
 
 function unique<T>(items: T[]): T[] {

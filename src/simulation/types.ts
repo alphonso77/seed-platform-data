@@ -89,7 +89,23 @@ export interface OiResultRow {
   rawPayload: Record<string, unknown>;
 }
 
-export type MergeStatus = 'fully_merged' | 'under_merged' | 'over_merged' | 'missing';
+export type MergeStatus = 'fully_merged' | 'under_merged' | 'deferred_review' | 'over_merged' | 'missing';
+
+/**
+ * One `oi.match_review_queue` row as the grader needs it: the raw record that
+ * was queued, the DNA it was queued against, and the resolver's score. The
+ * grader is source-agnostic; the loader that fills these is separate.
+ */
+export interface ReviewQueueEdge {
+  queueId: string;
+  rawRecordId: string;
+  candidateDnaRecordId: string;
+  score: number;
+  markerBreakdown: Record<string, number>;
+  status: 'pending' | 'approved' | 'rejected';
+  suggestedAt: string;
+  decidedAt: string | null;
+}
 
 export interface RecordResult {
   canonicalId: string;
@@ -129,6 +145,13 @@ export interface CanonicalResult {
    * tables manually.
    */
   dnaBreakdown?: DnaBreakdownGroup[];
+  /**
+   * Populated for split canonicals when review-queue rows link two of their
+   * DNAs. On `deferred_review` these include the pending/approved rows that
+   * join the split; rejected rows are listed too (on `under_merged` as well)
+   * so a reader can see a pair was queued and turned down.
+   */
+  reviewPairs?: ReviewQueueEdge[];
 }
 
 export interface Report {
@@ -138,6 +161,8 @@ export interface Report {
     canonicalCount: number;
     fullyMerged: number;
     underMerged: number;
+    /** Split canonicals whose DNAs are joined by pending/approved review-queue rows. */
+    deferredReview: number;
     overMerged: number;
     missing: number;
     recordsTotal: number;
@@ -145,6 +170,10 @@ export interface Report {
     recordsFailed: number;
     precision: number;
     recall: number;
+    /** Pairwise recall counting pairs joined by pending/approved review-queue rows as merged. */
+    recallWithDeferred: number;
+    /** False when no review-queue data was supplied; `deferredReview` is then always 0. */
+    reviewQueueChecked: boolean;
   };
   canonicals: CanonicalResult[];
   records: RecordResult[];
