@@ -8,6 +8,8 @@ const LINE_TIME = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})/;
 interface ResolvedEvent {
   rawRecordId: string;
   outcome: ResolutionOutcome;
+  /** Railway's ingest time (ms) from `--json` lines; only breaks same-second ties. */
+  ingestedAt: string | null;
 }
 
 /**
@@ -20,11 +22,16 @@ export function parseResolutionLog(text: string): ResolvedEvent[] {
   for (const rawLine of text.split(/\r?\n/)) {
     let line = rawLine.trim();
     if (!line) continue;
+    // `--json` lines wrap the message and add Railway's ingest timestamp.
+    let wrapperTime: string | null = null;
     if (line.startsWith('{')) {
       try {
-        const wrapped = JSON.parse(line) as { message?: unknown };
+        const wrapped = JSON.parse(line) as { message?: unknown; timestamp?: unknown };
         if (typeof wrapped.message !== 'string') continue;
         line = wrapped.message;
+        if (typeof wrapped.timestamp === 'string' && !Number.isNaN(Date.parse(wrapped.timestamp))) {
+          wrapperTime = new Date(wrapped.timestamp).toISOString();
+        }
       } catch {
         continue;
       }
@@ -39,8 +46,11 @@ export function parseResolutionLog(text: string): ResolvedEvent[] {
       continue;
     }
     if (typeof payload.raw_record_id !== 'string') continue;
-    // The workers' logger stamps lines in UTC without a zone marker.
+    // Event time is the workers' logger stamp (UTC, second precision). The
+    // wrapper's timestamp is ingest time, seconds later, so it only orders
+    // events that share a second.
     const time = LINE_TIME.exec(line);
+    const at = time ? `${time[1]}T${time[2]}Z` : null;
     events.push({
       rawRecordId: payload.raw_record_id,
       outcome: {
@@ -49,8 +59,9 @@ export function parseResolutionLog(text: string): ResolvedEvent[] {
         via: typeof payload.via === 'string' ? payload.via : null,
         reason: typeof payload.tier2_reason === 'string' ? payload.tier2_reason : null,
         score: typeof payload.score === 'number' ? payload.score : null,
-        at: time ? `${time[1]}T${time[2]}Z` : null,
+        at,
       },
+      ingestedAt: wrapperTime,
     });
   }
   return events;
@@ -68,17 +79,25 @@ export function pickResolutions(
   events: ResolvedEvent[],
   runRawRecordIds: Set<string>,
 ): Record<string, RecordResolution> {
-  const byRecord = new Map<string, ResolutionOutcome[]>();
-  for (const { rawRecordId, outcome } of events) {
-    if (!runRawRecordIds.has(rawRecordId)) continue;
-    const list = byRecord.get(rawRecordId) ?? [];
-    list.push(outcome);
-    byRecord.set(rawRecordId, list);
+  const byRecord = new Map<string, ResolvedEvent[]>();
+  for (const e of events) {
+    if (!runRawRecordIds.has(e.rawRecordId)) continue;
+    const list = byRecord.get(e.rawRecordId) ?? [];
+    list.push(e);
+    byRecord.set(e.rawRecordId, list);
   }
   const out: Record<string, RecordResolution> = {};
-  for (const [rawRecordId, outcomes] of byRecord) {
-    // Stable sort keeps log order for equal (second-precision) timestamps.
-    const sorted = [...outcomes].sort((a, b) => (a.at ?? '').localeCompare(b.at ?? ''));
+  for (const [rawRecordId, recordEvents] of byRecord) {
+    // Event second first, then ingest time. Stable sort: plain lines in the
+    // same second keep log order, and lines with no timestamp at all ('' sorts
+    // first) degrade to log order as well.
+    const sorted = [...recordEvents]
+      .sort(
+        (a, b) =>
+          (a.outcome.at ?? '').localeCompare(b.outcome.at ?? '') ||
+          (a.ingestedAt ?? '').localeCompare(b.ingestedAt ?? ''),
+      )
+      .map((e) => e.outcome);
     out[rawRecordId] = {
       source: 'log',
       first: sorted[0],

@@ -1,4 +1,5 @@
 import { Client } from 'pg';
+import { parse as parsePgConnectionString } from 'pg-connection-string';
 import { RecordResolution, ResolutionOutcome, ReviewQueueEdge } from '@/simulation/types';
 
 /**
@@ -16,7 +17,12 @@ export class OiDatabaseRefusedError extends Error {
   }
 }
 
-/** Throws unless `url` points at an allowlisted dev host. Never echoes credentials. */
+/**
+ * Throws unless `url` points at an allowlisted dev host. Never echoes
+ * credentials. The allowlist runs on what pg will actually connect to
+ * (pg-connection-string's parse), not the URL authority: pg lets `?host=` /
+ * `?port=` override the authority, so any query string is refused outright.
+ */
 export function assertDevOiDatabaseUrl(url: string): void {
   let parsed: URL;
   try {
@@ -27,7 +33,11 @@ export function assertDevOiDatabaseUrl(url: string): void {
   if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
     throw new OiDatabaseRefusedError(`OI_DATABASE_URL must be a postgres URL (got ${parsed.protocol})`);
   }
-  const hostPort = `${parsed.hostname}:${parsed.port || '5432'}`;
+  if (parsed.search !== '') {
+    throw new OiDatabaseRefusedError('OI_DATABASE_URL must not carry query parameters');
+  }
+  const target = parsePgConnectionString(url);
+  const hostPort = `${target.host ?? ''}:${target.port || '5432'}`;
   if (!DEV_OI_DATABASE_HOSTS.includes(hostPort)) {
     throw new OiDatabaseRefusedError(
       `Refusing OI database ${hostPort}: not in the dev allowlist (${DEV_OI_DATABASE_HOSTS.join(', ')})`,
@@ -60,7 +70,12 @@ export async function fetchOiDatabaseSnapshot(
   scope: { orgId: string; rawRecordIds: string[]; dnaRecordIds: string[] },
 ): Promise<OiDatabaseSnapshot> {
   assertDevOiDatabaseUrl(url);
-  const client = new Client({ connectionString: url });
+  // Fail rather than hang the surrounding `railway run` if the proxy is down.
+  const client = new Client({
+    connectionString: url,
+    connectionTimeoutMillis: 10_000,
+    statement_timeout: 30_000,
+  });
   try {
     await client.connect();
   } catch (error) {

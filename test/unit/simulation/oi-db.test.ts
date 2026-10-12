@@ -11,6 +11,16 @@ describe('simulation/oi-db assertDevOiDatabaseUrl', () => {
       .to.throw(OiDatabaseRefusedError, /not in the dev allowlist/);
   });
 
+  it('refuses query parameters, which pg would let override the allowlisted host/port', () => {
+    expect(() => assertDevOiDatabaseUrl(
+      'postgresql://u:secret@shinkansen.proxy.rlwy.net:29513/railway?host=prod.example.com&port=5432',
+    )).to.throw(OiDatabaseRefusedError);
+    expect(() => assertDevOiDatabaseUrl('postgresql://u:secret@shinkansen.proxy.rlwy.net:29513/railway?host=prod.example.com'))
+      .to.throw(OiDatabaseRefusedError);
+    expect(() => assertDevOiDatabaseUrl('postgresql://u:secret@shinkansen.proxy.rlwy.net:29513/railway?sslmode=require'))
+      .to.throw(OiDatabaseRefusedError, /query parameters/);
+  });
+
   it('refuses internal hosts and non-postgres URLs', () => {
     expect(() => assertDevOiDatabaseUrl('postgresql://u:secret@postgres.railway.internal:5432/railway'))
       .to.throw(OiDatabaseRefusedError);

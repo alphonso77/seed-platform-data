@@ -193,7 +193,7 @@ Collision avoidance appends a random 3-digit suffix when names would collide.
 
 The Simulation page generates an answer key plus dirty per-platform datasets, uploads them, and grades an Organic Intelligence result CSV against the answer key. See [`docs/grading.md`](docs/grading.md) for how grading works.
 
-Caveat when reading results: every simulated person gets their own hashed email domain, so email-domain agreement is far stronger evidence in the sim than in production (where a shared domain usually means "same company"). A merge driven mainly by domain agreement in the sim is weak evidence of correct behavior on real data.
+Caveat when reading results: every simulated person's canonical and Tier 1 records use their own random domain (`first.last@<8 hex>.example.com`), so email-domain agreement is far stronger evidence in the sim than in production (where a shared domain usually means "same company"). A merge driven mainly by domain agreement in the sim is weak evidence of correct behavior on real data.
 
 ## Platform Credentials & Permissions
 

@@ -199,7 +199,9 @@ function computeSummary(
   const missing = canonicals.filter((c) => c.mergeStatus === 'missing').length;
 
   const recordsPassed = records.filter((r) => r.pass).length;
-  const recordsFailed = records.length - recordsPassed;
+  // Deferred records are neither passed nor failed.
+  const recordsDeferred = records.filter((r) => r.mergeStatus === 'deferred_review').length;
+  const recordsFailed = records.length - recordsPassed - recordsDeferred;
 
   const { precision, recall } = pairwiseMetrics(mapping, (id) => dnaByInternalId.get(id));
   const { recall: recallWithDeferred } = pairwiseMetrics(mapping, (id) => {
@@ -217,6 +219,7 @@ function computeSummary(
     recordsTotal: records.length,
     recordsPassed,
     recordsFailed,
+    recordsDeferred,
     precision,
     recall,
     recallWithDeferred,

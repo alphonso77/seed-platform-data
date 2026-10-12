@@ -30,7 +30,7 @@ export function PassFailReport({ report }: Props) {
 
   const filtered = useMemo(() => {
     if (filter === 'all') return records;
-    if (filter === 'fail') return records.filter((r) => !r.pass);
+    if (filter === 'fail') return records.filter((r) => !r.pass && r.mergeStatus !== 'deferred_review');
     return records.filter((r) => r.mergeStatus === filter);
   }, [records, filter]);
 

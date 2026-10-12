@@ -211,7 +211,9 @@ export interface Report {
     missing: number;
     recordsTotal: number;
     recordsPassed: number;
+    /** Excludes deferred records. */
     recordsFailed: number;
+    recordsDeferred: number;
     precision: number;
     recall: number;
     /** Pairwise recall counting pairs joined by pending/approved review-queue rows as merged. */

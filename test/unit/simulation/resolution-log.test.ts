@@ -26,7 +26,9 @@ describe('simulation/resolution-log', () => {
       tier: 2, action: 'created', via: null, reason: 'no_candidates', score: null,
       at: '2026-10-12T19:06:53Z',
     });
+    // --json line: event time stays the worker's stamp; ingest time is kept apart.
     expect(events[2].outcome.at).to.equal('2026-10-12T19:36:53Z');
+    expect(events[2].ingestedAt).to.equal('2026-10-12T19:37:02.050Z');
     expect(events[3].outcome.score).to.equal(0.718);
   });
 
@@ -42,6 +44,18 @@ describe('simulation/resolution-log', () => {
     expect(picked[ORPHAN].count).to.equal(3);
     expect(picked.sib.first.action).to.equal('review_queued');
     expect(picked.sib.latest).to.be.null;
+  });
+
+  it('orders same-second --json events by ingest time, not log order', () => {
+    const wrap = (ts: string, payload: Record<string, unknown>) =>
+      JSON.stringify({ message: event('2026-10-12 19:06:53', payload), timestamp: ts });
+    const log = [
+      wrap('2026-10-12T19:06:53.900Z', { raw_record_id: 'r', tier: 1, action: 'merged', via: 'email' }),
+      wrap('2026-10-12T19:06:53.100Z', { raw_record_id: 'r', tier: 2, action: 'created', tier2_reason: 'no_candidates' }),
+    ].join('\n');
+    const picked = pickResolutions(parseResolutionLog(log), new Set(['r']));
+    expect(picked.r.first.action).to.equal('created');
+    expect(picked.r.latest?.action).to.equal('merged');
   });
 
   it('ignores events for raw records outside the run', () => {

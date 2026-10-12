@@ -40,7 +40,7 @@ For `under_merged`, `deferred_review` and `over_merged` canonicals, the report a
 
 ## Reading results: email domains are stronger evidence here than in production
 
-The answer key gives every person their own hashed domain (`firstname.lastname@{8-hex}.example.com`), so no two people in a run share an email domain. In the sim, `email_domain` agreement therefore identifies a person almost on its own. In production a shared domain usually means "same company" (or a free-mail provider) and says little about identity. A merge in the sim that rests mainly on domain agreement (e.g. a Tier 2 fuzzy record with a mutated local part, no phone and no address) is weak evidence that the resolver would make the same call correctly on real data.
+The answer key gives every person their own random domain (`firstname.lastname@{8 hex of a uuid}.example.com`), and every canonical and Tier 1 record keeps it, so outside fuzzy duplicates no two people in a run share an email domain. (Shopify fuzzy duplicates use plain `example.com`, which they share across people; Stripe and HubSpot fuzzy duplicates keep the person's domain.) In the sim, `email_domain` agreement therefore identifies a person almost on its own. In production a shared domain usually means "same company" (or a free-mail provider) and says little about identity. A merge in the sim that rests mainly on domain agreement (e.g. a Tier 2 fuzzy record with a mutated local part, no phone and no address) is weak evidence that the resolver would make the same call correctly on real data.
 
 ## Enrichment: review queue and resolution reasons
 

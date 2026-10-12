@@ -200,6 +200,7 @@ export interface SimulationReport {
     recordsTotal: number;
     recordsPassed: number;
     recordsFailed: number;
+    recordsDeferred?: number;
     precision: number;
     recall: number;
     recallWithDeferred?: number;

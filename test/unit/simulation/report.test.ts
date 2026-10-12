@@ -282,6 +282,8 @@ describe('simulation/report', () => {
       expect(report.canonicals[0].reviewPairs).to.deep.equal([edge]);
       expect(report.summary.deferredReview).to.equal(1);
       expect(report.summary.underMerged).to.equal(0);
+      expect(report.summary.recordsFailed).to.equal(0);
+      expect(report.summary.recordsDeferred).to.equal(3);
       expect(report.summary.reviewQueueChecked).to.be.true;
       expect(report.summary.recall).to.be.below(1);
       expect(report.summary.recallWithDeferred).to.equal(1);
