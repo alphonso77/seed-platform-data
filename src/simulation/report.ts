@@ -98,7 +98,11 @@ export function generateReport(input: GenerateReportInput): Report {
     .filter((l): l is { edge: ReviewQueueEdge; rawDna: string } => l.rawDna != null);
   const deferredUnion = new UnionFind();
   for (const { edge, rawDna } of queueLinks) {
-    if (edge.status !== 'rejected') deferredUnion.union(rawDna, edge.candidateDnaRecordId);
+    // A null candidate (DNA deleted) would join every such row through one
+    // shared node; the loader filters these out, this guards other sources.
+    if (edge.status !== 'rejected' && edge.candidateDnaRecordId != null) {
+      deferredUnion.union(rawDna, edge.candidateDnaRecordId);
+    }
   }
 
   const canonicals: CanonicalResult[] = [];
@@ -131,6 +135,7 @@ export function generateReport(input: GenerateReportInput): Report {
     const reviewPairs = isSplit
       ? queueLinks
           .filter(({ edge, rawDna }) =>
+            edge.candidateDnaRecordId != null &&
             rawDna !== edge.candidateDnaRecordId &&
             ownDnas.has(rawDna) &&
             ownDnas.has(edge.candidateDnaRecordId))

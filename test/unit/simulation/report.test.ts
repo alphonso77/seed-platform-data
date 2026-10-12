@@ -52,7 +52,7 @@ function oiRow(
 
 function queueEdge(
   rawRecordId: string,
-  candidateDnaRecordId: string,
+  candidateDnaRecordId: string | null,
   status: ReviewQueueEdge['status'],
 ): ReviewQueueEdge {
   return {
@@ -324,6 +324,37 @@ describe('simulation/report', () => {
       });
       expect(report.canonicals[0].mergeStatus).to.equal('under_merged');
       expect(report.canonicals[0].reviewPairs).to.be.undefined;
+    });
+
+    it('does not join unrelated splits through pending rows whose candidate DNA is null', () => {
+      // Two people, each split; each has a pending row whose candidate DNA was
+      // deleted. Unioning on null would make both "deferred".
+      const report = generateReport({
+        runId: 'run',
+        answerKey: [person('c1'), person('c2')],
+        uploadMapping: [
+          mapping('c1', 'i1', 'stripe', 'cus_1'),
+          mapping('c1', 'i2', 'hubspot', 'hs_1'),
+          mapping('c2', 'i3', 'stripe', 'cus_2'),
+          mapping('c2', 'i4', 'hubspot', 'hs_2'),
+        ],
+        oiRows: [
+          oiRow('r1', 'd-1a', 'stripe', 'cus_1'),
+          oiRow('r2', 'd-1b', 'hubspot', 'hs_1'),
+          oiRow('r3', 'd-2a', 'stripe', 'cus_2'),
+          oiRow('r4', 'd-2b', 'hubspot', 'hs_2'),
+        ],
+        reviewQueue: [
+          queueEdge('r1', null, 'pending'),
+          queueEdge('r2', null, 'pending'),
+          queueEdge('r3', null, 'pending'),
+          queueEdge('r4', null, 'pending'),
+        ],
+      });
+      expect(report.canonicals.map((c) => c.mergeStatus)).to.deep.equal(['under_merged', 'under_merged']);
+      expect(report.summary.deferredReview).to.equal(0);
+      expect(report.canonicals.every((c) => c.reviewPairs === undefined)).to.be.true;
+      expect(report.summary.recallWithDeferred).to.equal(report.summary.recall);
     });
 
     it('reports reviewQueueChecked false when no queue data was supplied', () => {

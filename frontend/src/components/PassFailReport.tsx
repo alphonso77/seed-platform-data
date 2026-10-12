@@ -163,7 +163,7 @@ export function PassFailReport({ report }: Props) {
                   <span className="font-mono">{q.queueId.slice(0, 8)}…</span>
                   <span>
                     raw <span className="font-mono">{q.rawRecordId.slice(0, 8)}…</span> → DNA{' '}
-                    <span className="font-mono">{q.candidateDnaRecordId.slice(0, 8)}…</span>
+                    <span className="font-mono">{q.candidateDnaRecordId ? `${q.candidateDnaRecordId.slice(0, 8)}…` : 'deleted'}</span>
                   </span>
                   <span>score {q.score.toFixed(3)}</span>
                   <span className="text-gray-500 dark:text-gray-400">

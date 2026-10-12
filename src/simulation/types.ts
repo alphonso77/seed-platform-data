@@ -99,7 +99,8 @@ export type MergeStatus = 'fully_merged' | 'under_merged' | 'deferred_review' | 
 export interface ReviewQueueEdge {
   queueId: string;
   rawRecordId: string;
-  candidateDnaRecordId: string;
+  /** Null when the candidate DNA was deleted (FK ON DELETE SET NULL). */
+  candidateDnaRecordId: string | null;
   score: number;
   markerBreakdown: Record<string, number>;
   status: 'pending' | 'approved' | 'rejected';

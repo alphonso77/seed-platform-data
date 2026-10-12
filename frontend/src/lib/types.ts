@@ -116,7 +116,7 @@ export interface RecordResolution {
 export interface ReviewQueueEdge {
   queueId: string;
   rawRecordId: string;
-  candidateDnaRecordId: string;
+  candidateDnaRecordId: string | null;
   score: number;
   markerBreakdown: Record<string, number>;
   status: 'pending' | 'approved' | 'rejected';

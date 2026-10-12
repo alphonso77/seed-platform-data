@@ -97,6 +97,7 @@ export async function fetchOiDatabaseSnapshot(
               status, suggested_at, decided_at
          FROM oi.match_review_queue
         WHERE org_id = $1
+          AND candidate_dna_record_id IS NOT NULL
           AND (raw_record_id = ANY($2::uuid[]) OR candidate_dna_record_id = ANY($3::uuid[]))`,
       [scope.orgId, scope.rawRecordIds, scope.dnaRecordIds],
     );
