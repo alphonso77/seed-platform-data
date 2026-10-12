@@ -6,6 +6,7 @@ import {
   DnaBreakdownRecord,
   MergeStatus,
   OiResultRow,
+  RecordResolution,
   RecordResult,
   Report,
   ReviewQueueEdge,
@@ -22,6 +23,8 @@ export interface GenerateReportInput {
    * not checked; split canonicals then grade `under_merged` as before.
    */
   reviewQueue?: ReviewQueueEdge[];
+  /** Per raw_record_id resolution outcome (DB columns or worker-log import). */
+  resolutions?: Record<string, RecordResolution>;
 }
 
 const PLATFORMS: Platform[] = ['stripe', 'hubspot', 'shopify'];
@@ -31,7 +34,7 @@ function platformKey(platform: string, externalId: string): string {
 }
 
 export function generateReport(input: GenerateReportInput): Report {
-  const { runId, answerKey, uploadMapping, oiRows, reviewQueue } = input;
+  const { runId, answerKey, uploadMapping, oiRows, reviewQueue, resolutions } = input;
 
   // Index canonical email by canonicalId so each RecordResult carries the
   // canonical's email — used by the report UI to let a demo'er paste the
@@ -145,6 +148,8 @@ export function generateReport(input: GenerateReportInput): Report {
     });
 
     for (const m of expected) {
+      const row = oiByPlatformKey.get(platformKey(m.platform, m.externalId));
+      const resolution = row ? resolutions?.[row.rawRecordId] : undefined;
       records.push({
         canonicalId: m.canonicalId,
         canonicalEmail: emailByCanonical.get(m.canonicalId) ?? '',
@@ -152,6 +157,9 @@ export function generateReport(input: GenerateReportInput): Report {
         platform: m.platform,
         externalId: m.externalId,
         dnaRecordId: dnaByInternalId.get(m.internalId) ?? null,
+        rawRecordId: row?.rawRecordId ?? null,
+        resolvedAt: row?.resolvedAt ?? null,
+        ...(resolution ? { resolution } : {}),
         pass: status === 'fully_merged',
         mergeStatus: status,
       });
@@ -260,6 +268,16 @@ export function reportToCsv(report: Report): string {
     'dna_record_id',
     'merge_status',
     'pass',
+    'raw_record_id',
+    'resolved_at',
+    'resolution_tier',
+    'resolution_action',
+    'resolution_via',
+    'resolution_reason',
+    'resolution_score',
+    'resolution_count',
+    'latest_resolution_action',
+    'latest_resolution_via',
   ];
   const lines = [header.join(',')];
   for (const r of report.records) {
@@ -273,6 +291,16 @@ export function reportToCsv(report: Report): string {
         r.dnaRecordId ?? '',
         r.mergeStatus,
         r.pass ? 'pass' : r.mergeStatus === 'deferred_review' ? 'deferred' : 'fail',
+        r.rawRecordId ?? '',
+        r.resolvedAt ?? '',
+        r.resolution?.first.tier == null ? '' : String(r.resolution.first.tier),
+        r.resolution?.first.action ?? '',
+        r.resolution?.first.via ?? '',
+        r.resolution?.first.reason ?? '',
+        r.resolution?.first.score == null ? '' : String(r.resolution.first.score),
+        r.resolution?.count == null ? '' : String(r.resolution.count),
+        r.resolution?.latest?.action ?? '',
+        r.resolution?.latest?.via ?? '',
       ]
         .map(csvCell)
         .join(','),

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
+import fs from 'fs';
 import { Command } from 'commander';
+import { parse as parseDotenv } from 'dotenv';
 import { loadEnv } from '@config/env';
 import { Platform, DatasetSize } from '@/types';
 import { PLATFORMS } from '@config/platforms';
@@ -8,6 +10,7 @@ import { runSeed } from '@commands/seed';
 import { runClean } from '@commands/clean';
 import { runStatus } from '@commands/status';
 import { runValidate } from '@commands/validate';
+import { runEnrich } from '@commands/simulate';
 import {
   formatSeedResult,
   formatCleanResult,
@@ -96,6 +99,32 @@ program
     const check = await runValidate(platform);
     console.log(formatEnvironmentCheck(check));
     process.exitCode = check.isSandbox ? 0 : 1;
+  });
+
+program
+  .command('simulate-enrich <runId>')
+  .description(
+    'Add OI review-queue rows and resolution reasons to a simulation report. ' +
+      'DB: run under `railway run -s Postgres -e development -- sh -c ' +
+      '\'OI_DATABASE_URL="$DATABASE_PUBLIC_URL" npm run cli -- simulate-enrich <runId>\'`',
+  )
+  .option('--logs <file>', 'Saved `railway logs -s workers -e development --filter oi.resolution.resolved` output')
+  .action(async (runId: string, opts: { logs?: string }) => {
+    // The URL must be injected per invocation, never kept in .env.
+    if (fs.existsSync('.env') && 'OI_DATABASE_URL' in parseDotenv(fs.readFileSync('.env'))) {
+      throw new Error('OI_DATABASE_URL must not be stored in .env; inject it per run with `railway run`');
+    }
+    const report = await runEnrich(runId, {
+      databaseUrl: process.env.OI_DATABASE_URL,
+      resolutionLog: opts.logs ? fs.readFileSync(opts.logs, 'utf8') : undefined,
+    });
+    const s = report.summary;
+    console.log(
+      `Report ${runId}: ${s.fullyMerged} merged, ${s.deferredReview} deferred to review, ` +
+        `${s.underMerged} under-merged, ${s.overMerged} over-merged, ${s.missing} missing ` +
+        `(review queue ${s.reviewQueueChecked ? 'checked' : 'not checked'}; ` +
+        `recall ${s.recall.toFixed(3)}, with deferred ${s.recallWithDeferred.toFixed(3)})`,
+    );
   });
 
 program

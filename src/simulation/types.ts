@@ -107,6 +107,47 @@ export interface ReviewQueueEdge {
   decidedAt: string | null;
 }
 
+/** One `oi.resolution.resolved` outcome for a raw record. */
+export interface ResolutionOutcome {
+  tier: number | null;
+  /**
+   * `merged` / `coalesced` (Tier 1, with `via`), `auto_merged` /
+   * `review_queued` (Tier 2, with `score`) or `created` (with `reason`:
+   * `no_blocking_input` / `no_candidates` / `below_floor`).
+   */
+  action: string | null;
+  via: string | null;
+  reason: string | null;
+  score: number | null;
+  at: string | null;
+}
+
+/**
+ * How OI resolved one raw record. `first` is the resolution that placed the
+ * record and is what grading reads; OI re-resolves records on later polls, so
+ * `latest` (the current state) is often a Tier 1 match to the record's own DNA.
+ */
+export interface RecordResolution {
+  source: 'db' | 'log';
+  first: ResolutionOutcome;
+  latest: ResolutionOutcome | null;
+  /** How many times the record was resolved (null when unknown). */
+  count: number | null;
+}
+
+/**
+ * OI-side data fetched after the run, persisted as `oi-enrichment.json` so
+ * re-running the report (e.g. from the UI) keeps it. Holds data only, never
+ * connection details.
+ */
+export interface OiEnrichment {
+  fetchedAt: string;
+  /** Null when the review queue was not fetched. */
+  reviewQueue: ReviewQueueEdge[] | null;
+  /** Keyed by raw_record_id. Null when no resolution source was available. */
+  resolutions: Record<string, RecordResolution> | null;
+}
+
 export interface RecordResult {
   canonicalId: string;
   canonicalEmail: string;
@@ -114,6 +155,9 @@ export interface RecordResult {
   platform: Platform;
   externalId: string;
   dnaRecordId: string | null;
+  rawRecordId: string | null;
+  resolvedAt: string | null;
+  resolution?: RecordResolution;
   pass: boolean;
   mergeStatus: MergeStatus;
 }

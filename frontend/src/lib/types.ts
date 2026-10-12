@@ -95,8 +95,37 @@ export interface UploadResult {
   errors: string[];
 }
 
-export type MergeStatus = 'fully_merged' | 'under_merged' | 'over_merged' | 'missing';
+export type MergeStatus = 'fully_merged' | 'under_merged' | 'deferred_review' | 'over_merged' | 'missing';
 
+export interface ResolutionOutcome {
+  tier: number | null;
+  action: string | null;
+  via: string | null;
+  reason: string | null;
+  score: number | null;
+  at: string | null;
+}
+
+export interface RecordResolution {
+  source: 'db' | 'log';
+  first: ResolutionOutcome;
+  latest: ResolutionOutcome | null;
+  count: number | null;
+}
+
+export interface ReviewQueueEdge {
+  queueId: string;
+  rawRecordId: string;
+  candidateDnaRecordId: string;
+  score: number;
+  markerBreakdown: Record<string, number>;
+  status: 'pending' | 'approved' | 'rejected';
+  suggestedAt: string;
+  decidedAt: string | null;
+}
+
+// Fields added with review-queue grading are optional so reports saved
+// before it still render.
 export interface RecordResult {
   canonicalId: string;
   canonicalEmail: string;
@@ -104,6 +133,9 @@ export interface RecordResult {
   platform: Platform;
   externalId: string;
   dnaRecordId: string | null;
+  rawRecordId?: string | null;
+  resolvedAt?: string | null;
+  resolution?: RecordResolution;
   pass: boolean;
   mergeStatus: MergeStatus;
 }
@@ -152,6 +184,7 @@ export interface CanonicalResult {
   expectedRecords: number;
   foundRecords: number;
   dnaRecordIds: string[];
+  reviewPairs?: ReviewQueueEdge[];
 }
 
 export interface SimulationReport {
@@ -161,6 +194,7 @@ export interface SimulationReport {
     canonicalCount: number;
     fullyMerged: number;
     underMerged: number;
+    deferredReview?: number;
     overMerged: number;
     missing: number;
     recordsTotal: number;
@@ -168,6 +202,8 @@ export interface SimulationReport {
     recordsFailed: number;
     precision: number;
     recall: number;
+    recallWithDeferred?: number;
+    reviewQueueChecked?: boolean;
   };
   canonicals: CanonicalResult[];
   records: RecordResult[];

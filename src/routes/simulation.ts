@@ -42,6 +42,7 @@ const ALLOWED_ARTIFACTS: ArtifactName[] = [
   'shopify-dirty.json',
   'upload-result.json',
   'oi-result.csv',
+  'oi-enrichment.json',
   'report.json',
   'report.csv',
 ];
