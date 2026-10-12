@@ -36,7 +36,13 @@ export function assertDevOiDatabaseUrl(url: string): void {
   if (parsed.search !== '') {
     throw new OiDatabaseRefusedError('OI_DATABASE_URL must not carry query parameters');
   }
-  const target = parsePgConnectionString(url);
+  let target: ReturnType<typeof parsePgConnectionString>;
+  try {
+    target = parsePgConnectionString(url);
+  } catch {
+    // Its TypeError carries the full input (password included) in `input`.
+    throw new OiDatabaseRefusedError('OI_DATABASE_URL could not be parsed as a connection string');
+  }
   const hostPort = `${target.host ?? ''}:${target.port || '5432'}`;
   if (!DEV_OI_DATABASE_HOSTS.includes(hostPort)) {
     throw new OiDatabaseRefusedError(
