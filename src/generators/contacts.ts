@@ -1,13 +1,16 @@
 import { faker } from '@faker-js/faker';
-import { parsePhoneNumberFromString } from 'libphonenumber-js';
+import { parsePhoneNumberFromString } from 'libphonenumber-js/max';
 import { GeneratedContact } from '@/types';
 import { generateEmail, resetEmailTracker } from '@generators/emails';
 
-function generateValidUSPhone(): string {
+// Uses the full ("max") metadata: the default "min" metadata only checks
+// length, so NANP numbers in territories (e.g. American Samoa, +1 684) passed
+// as valid and Shopify then rejected them with `"phone": ["is invalid"]`.
+export function generateValidUSPhone(): string {
   for (let i = 0; i < 25; i++) {
     const candidate = faker.phone.number({ style: 'national' });
     const parsed = parsePhoneNumberFromString(candidate, 'US');
-    if (parsed?.isValid()) return parsed.format('E.164');
+    if (parsed?.isValid() && parsed.country === 'US') return parsed.format('E.164');
   }
   return '+12015550123';
 }
