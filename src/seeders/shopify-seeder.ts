@@ -8,6 +8,7 @@ import {
   CleanOptions,
   CleanResult,
   EnvironmentCheck,
+  GeneratedProduct,
   SEEDED_TAG,
   SEEDED_AT_TAG,
 } from '@/types';
@@ -36,6 +37,98 @@ export function parseShopifyNextPageInfo(link: string | undefined): string | und
     if (match) return match[1];
   }
   return undefined;
+}
+
+// Products go through the GraphQL Admin API: Shopify has deprecated the REST
+// `products` resource (the client logs an "API Deprecation Notice" on every
+// call). Customers and draft orders are not flagged yet and stay on REST.
+const PRODUCT_SET_MUTATION = `
+  mutation SeedProductSet($input: ProductSetInput!) {
+    productSet(input: $input, synchronous: true) {
+      product {
+        id
+        variants(first: 1) {
+          nodes {
+            legacyResourceId
+          }
+        }
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const PRODUCTS_PAGE_QUERY = `
+  query SeedProductsPage($first: Int!, $after: String) {
+    products(first: $first, after: $after) {
+      nodes {
+        id
+        tags
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+    }
+  }
+`;
+
+const PRODUCT_DELETE_MUTATION = `
+  mutation SeedProductDelete($input: ProductDeleteInput!) {
+    productDelete(input: $input, synchronous: true) {
+      deletedProductId
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+interface ShopifyUserError {
+  field?: string[] | null;
+  message: string;
+}
+
+/**
+ * GraphQL mutations report validation failures as `userErrors` on a 200
+ * response rather than as thrown errors. Turn them into a thrown Error so the
+ * callers' existing try/catch → errors[] handling applies unchanged.
+ */
+export function assertNoUserErrors(operation: string, userErrors: ShopifyUserError[] | undefined): void {
+  if (!userErrors || userErrors.length === 0) return;
+  const detail = userErrors
+    .map((e) => (e.field && e.field.length > 0 ? `${e.field.join('.')}: ${e.message}` : e.message))
+    .join('; ');
+  throw new Error(`${operation} failed: ${detail}`);
+}
+
+/**
+ * Build the `productSet` input for one generated product. Mirrors the old REST
+ * payload: one default variant with price + SKU and untracked inventory (REST
+ * `inventory_management: null`), tagged for clean.
+ */
+export function buildProductSetInput(product: GeneratedProduct, seededAt: string): Record<string, unknown> {
+  return {
+    title: product.name,
+    descriptionHtml: `<p>${product.description}</p>`,
+    vendor: 'Seed Platform Data',
+    productType: product.category,
+    status: 'ACTIVE',
+    tags: [SEEDED_TAG, `${SEEDED_AT_TAG}:${seededAt}`],
+    productOptions: [{ name: 'Title', values: [{ name: 'Default Title' }] }],
+    variants: [
+      {
+        optionValues: [{ optionName: 'Title', name: 'Default Title' }],
+        price: product.price.toFixed(2),
+        sku: product.sku,
+        inventoryItem: { tracked: false },
+      },
+    ],
+  };
 }
 
 export class ShopifySeeder extends BaseSeeder {
@@ -184,35 +277,28 @@ export class ShopifySeeder extends BaseSeeder {
       logger.info(`[Shopify] ${phoneRetries}/${contacts.length} customers had phone rejected, retried without phone`);
     }
 
-    // Create products
+    // Create products (GraphQL — see PRODUCT_SET_MUTATION)
+    const graphql = new this.shopify.clients.Graphql({ session: this.session });
     const variantIds: number[] = [];
     for (const product of products) {
       try {
         const response = await callWithRetry(() =>
-          client.post({
-            path: 'products',
-            data: {
-              product: {
-                title: product.name,
-                body_html: `<p>${product.description}</p>`,
-                vendor: 'Seed Platform Data',
-                product_type: product.category,
-                tags: `${SEEDED_TAG},${SEEDED_AT_TAG}:${seededAt}`,
-                variants: [
-                  {
-                    price: product.price.toFixed(2),
-                    sku: product.sku,
-                    inventory_management: null,
-                  },
-                ],
-              },
-            },
+          graphql.request(PRODUCT_SET_MUTATION, {
+            variables: { input: buildProductSetInput(product, seededAt) },
           }),
         );
-        const shopifyProduct = (response.body as Record<string, Record<string, unknown>>).product;
-        const variants = shopifyProduct.variants as Array<Record<string, unknown>>;
-        if (variants?.[0]) {
-          variantIds.push(variants[0].id as number);
+        const result = response.data?.productSet as
+          | {
+              product: { variants: { nodes: Array<{ legacyResourceId: string }> } } | null;
+              userErrors: ShopifyUserError[];
+            }
+          | undefined;
+        assertNoUserErrors('productSet', result?.userErrors);
+        // Draft orders are still created over REST, which wants the numeric
+        // variant id rather than the GraphQL gid.
+        const variantId = result?.product?.variants.nodes[0]?.legacyResourceId;
+        if (variantId) {
+          variantIds.push(Number(variantId));
         }
         created.products++;
       } catch (error) {
@@ -322,27 +408,39 @@ export class ShopifySeeder extends BaseSeeder {
       errors.push(`Draft orders: ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    // Delete seeded products
+    // Delete seeded products (GraphQL — see PRODUCTS_PAGE_QUERY). Pages every
+    // product and filters on tags client-side, as the REST version did, rather
+    // than using a `tag:` search query: search results are eventually
+    // consistent and could miss products seeded seconds earlier.
     try {
-      let pageInfo: string | undefined;
+      const graphql = new this.shopify.clients.Graphql({ session: this.session });
+      let after: string | null = null;
       let hasMore = true;
       while (hasMore) {
-        const params: Record<string, string | number> = { limit: 250 };
-        if (pageInfo) params.page_info = pageInfo;
+        const response = await callWithRetry(() =>
+          graphql.request(PRODUCTS_PAGE_QUERY, { variables: { first: 250, after } }),
+        );
+        const page = response.data?.products as
+          | {
+              nodes: Array<{ id: string; tags: string[] }>;
+              pageInfo: { hasNextPage: boolean; endCursor: string | null };
+            }
+          | undefined;
 
-        const response = await callWithRetry(() => client.get({ path: 'products', query: params }));
-        const shopifyProducts = (response.body as Record<string, unknown[]>).products ?? [];
-
-        for (const product of shopifyProducts) {
-          const p = product as Record<string, unknown>;
-          const tags = (p.tags as string) ?? '';
-          if (tags.includes(SEEDED_TAG)) {
+        for (const product of page?.nodes ?? []) {
+          if (product.tags.includes(SEEDED_TAG)) {
             if (!options.dryRun) {
               try {
-                await callWithRetry(() => client.delete({ path: `products/${p.id}` }));
+                const deleteResponse = await callWithRetry(() =>
+                  graphql.request(PRODUCT_DELETE_MUTATION, { variables: { input: { id: product.id } } }),
+                );
+                const result = deleteResponse.data?.productDelete as
+                  | { userErrors: ShopifyUserError[] }
+                  | undefined;
+                assertNoUserErrors('productDelete', result?.userErrors);
               } catch (error) {
                 errors.push(
-                  `Product ${p.id}: ${error instanceof Error ? error.message : String(error)}`,
+                  `Product ${product.id}: ${error instanceof Error ? error.message : String(error)}`,
                 );
                 continue;
               }
@@ -351,10 +449,8 @@ export class ShopifySeeder extends BaseSeeder {
           }
         }
 
-        const headers = response.headers as Record<string, string | string[]> | undefined;
-        const link = typeof headers?.link === 'string' ? headers.link : undefined;
-        pageInfo = parseShopifyNextPageInfo(link);
-        hasMore = !!pageInfo;
+        after = page?.pageInfo.endCursor ?? null;
+        hasMore = !!page?.pageInfo.hasNextPage && !!after;
       }
     } catch (error) {
       errors.push(`Products: ${error instanceof Error ? error.message : String(error)}`);
