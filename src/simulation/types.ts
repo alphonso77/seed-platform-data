@@ -89,7 +89,65 @@ export interface OiResultRow {
   rawPayload: Record<string, unknown>;
 }
 
-export type MergeStatus = 'fully_merged' | 'under_merged' | 'over_merged' | 'missing';
+export type MergeStatus = 'fully_merged' | 'under_merged' | 'deferred_review' | 'over_merged' | 'missing';
+
+/**
+ * One `oi.match_review_queue` row as the grader needs it: the raw record that
+ * was queued, the DNA it was queued against, and the resolver's score. The
+ * grader is source-agnostic; the loader that fills these is separate.
+ */
+export interface ReviewQueueEdge {
+  queueId: string;
+  rawRecordId: string;
+  /** Null when the candidate DNA was deleted (FK ON DELETE SET NULL). */
+  candidateDnaRecordId: string | null;
+  score: number;
+  markerBreakdown: Record<string, number>;
+  status: 'pending' | 'approved' | 'rejected';
+  suggestedAt: string;
+  decidedAt: string | null;
+}
+
+/** One `oi.resolution.resolved` outcome for a raw record. */
+export interface ResolutionOutcome {
+  tier: number | null;
+  /**
+   * `merged` / `coalesced` (Tier 1, with `via`), `auto_merged` /
+   * `review_queued` (Tier 2, with `score`) or `created` (with `reason`:
+   * `no_blocking_input` / `no_candidates` / `below_floor`).
+   */
+  action: string | null;
+  via: string | null;
+  reason: string | null;
+  score: number | null;
+  at: string | null;
+}
+
+/**
+ * How OI resolved one raw record. `first` is the resolution that placed the
+ * record and is what grading reads; OI re-resolves records on later polls, so
+ * `latest` (the current state) is often a Tier 1 match to the record's own DNA.
+ */
+export interface RecordResolution {
+  source: 'db' | 'log';
+  first: ResolutionOutcome;
+  latest: ResolutionOutcome | null;
+  /** How many times the record was resolved (null when unknown). */
+  count: number | null;
+}
+
+/**
+ * OI-side data fetched after the run, persisted as `oi-enrichment.json` so
+ * re-running the report (e.g. from the UI) keeps it. Holds data only, never
+ * connection details.
+ */
+export interface OiEnrichment {
+  fetchedAt: string;
+  /** Null when the review queue was not fetched. */
+  reviewQueue: ReviewQueueEdge[] | null;
+  /** Keyed by raw_record_id. Null when no resolution source was available. */
+  resolutions: Record<string, RecordResolution> | null;
+}
 
 export interface RecordResult {
   canonicalId: string;
@@ -98,6 +156,9 @@ export interface RecordResult {
   platform: Platform;
   externalId: string;
   dnaRecordId: string | null;
+  rawRecordId: string | null;
+  resolvedAt: string | null;
+  resolution?: RecordResolution;
   pass: boolean;
   mergeStatus: MergeStatus;
 }
@@ -129,6 +190,13 @@ export interface CanonicalResult {
    * tables manually.
    */
   dnaBreakdown?: DnaBreakdownGroup[];
+  /**
+   * Populated for split canonicals when review-queue rows link two of their
+   * DNAs. On `deferred_review` these include the pending/approved rows that
+   * join the split; rejected rows are listed too (on `under_merged` as well)
+   * so a reader can see a pair was queued and turned down.
+   */
+  reviewPairs?: ReviewQueueEdge[];
 }
 
 export interface Report {
@@ -138,13 +206,21 @@ export interface Report {
     canonicalCount: number;
     fullyMerged: number;
     underMerged: number;
+    /** Split canonicals whose DNAs are joined by pending/approved review-queue rows. */
+    deferredReview: number;
     overMerged: number;
     missing: number;
     recordsTotal: number;
     recordsPassed: number;
+    /** Excludes deferred records. */
     recordsFailed: number;
+    recordsDeferred: number;
     precision: number;
     recall: number;
+    /** Pairwise recall counting pairs joined by pending/approved review-queue rows as merged. */
+    recallWithDeferred: number;
+    /** False when no review-queue data was supplied; `deferredReview` is then always 0. */
+    reviewQueueChecked: boolean;
   };
   canonicals: CanonicalResult[];
   records: RecordResult[];

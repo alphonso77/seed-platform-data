@@ -8,17 +8,23 @@ import {
   listRuns,
   loadAnswerKey,
   loadDirty,
+  loadOiEnrichment,
   loadReport,
   loadRun,
   loadUploadResult,
   newRunId,
   readOiResult,
+  writeOiEnrichment,
   writeReport,
   writeUploadResult,
 } from '@/simulation/run-store';
 import { parseOiResultCsv } from '@/simulation/csv-parser';
+import { fetchOiDatabaseSnapshot } from '@/simulation/oi-db';
+import { parseResolutionLog, pickResolutions } from '@/simulation/resolution-log';
 import { generateReport, reportToCsv } from '@/simulation/report';
 import {
+  OiEnrichment,
+  RecordResolution,
   Report,
   SimulationRunOptions,
   SimulationRunSummary,
@@ -106,16 +112,75 @@ export async function runReport(runId: string): Promise<Report> {
   if (!oiCsv) throw new SimulationStateError(runId, 'OI result CSV not uploaded yet');
 
   const oiRows = parseOiResultCsv(oiCsv);
+  const enrichment = await loadOiEnrichment(runId);
   const report = generateReport({
     runId,
     answerKey,
     uploadMapping: uploadResult.mappings,
     oiRows,
+    reviewQueue: enrichment?.reviewQueue ?? undefined,
+    resolutions: enrichment?.resolutions ?? undefined,
   });
 
   await writeReport(runId, report, reportToCsv(report));
   logger.info('[Simulation] Report generated', { runId, summary: report.summary });
   return report;
+}
+
+export interface EnrichOptions {
+  /** Dev OI Postgres URL, injected per invocation (never read from `.env`). */
+  databaseUrl?: string;
+  /** Saved `railway logs ... --filter oi.resolution.resolved` output. */
+  resolutionLog?: string;
+}
+
+/**
+ * Fetch OI-side data the CSV doesn't carry (review-queue rows, per-record
+ * resolution outcomes), persist it as `oi-enrichment.json`, and regenerate
+ * the report. Resolutions come from the DB columns when present, with the
+ * worker-log import filling any record the DB has no outcome for.
+ */
+export async function runEnrich(runId: string, options: EnrichOptions): Promise<Report> {
+  const meta = await loadRun(runId);
+  if (!meta) throw new SimulationNotFoundError(runId);
+  const oiCsv = await readOiResult(runId);
+  if (!oiCsv) throw new SimulationStateError(runId, 'OI result CSV not uploaded yet');
+  if (!options.databaseUrl && !options.resolutionLog) {
+    throw new SimulationStateError(runId, 'nothing to enrich from: pass a database URL and/or a resolution log');
+  }
+
+  const oiRows = parseOiResultCsv(oiCsv);
+  const orgIds = Array.from(new Set(oiRows.map((r) => r.orgId)));
+  if (orgIds.length !== 1) {
+    throw new SimulationStateError(runId, `OI CSV must cover exactly one org (found ${orgIds.length})`);
+  }
+
+  let reviewQueue: OiEnrichment['reviewQueue'] = null;
+  let resolutions: Record<string, RecordResolution> | null = null;
+  if (options.databaseUrl) {
+    const snapshot = await fetchOiDatabaseSnapshot(options.databaseUrl, {
+      orgId: orgIds[0],
+      rawRecordIds: oiRows.map((r) => r.rawRecordId),
+      dnaRecordIds: Array.from(new Set(oiRows.map((r) => r.dnaRecordId).filter((d): d is string => d != null))),
+    });
+    reviewQueue = snapshot.reviewQueue;
+    resolutions = snapshot.resolutions;
+  }
+  if (options.resolutionLog) {
+    const fromLog = pickResolutions(
+      parseResolutionLog(options.resolutionLog),
+      new Set(oiRows.map((r) => r.rawRecordId)),
+    );
+    resolutions = { ...fromLog, ...(resolutions ?? {}) };
+  }
+
+  await writeOiEnrichment(runId, { fetchedAt: new Date().toISOString(), reviewQueue, resolutions });
+  logger.info('[Simulation] OI enrichment saved', {
+    runId,
+    reviewQueueRows: reviewQueue?.length ?? null,
+    resolutions: resolutions ? Object.keys(resolutions).length : null,
+  });
+  return runReport(runId);
 }
 
 export async function runListRuns(): Promise<SimulationRunSummary[]> {

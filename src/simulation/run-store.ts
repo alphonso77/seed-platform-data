@@ -4,6 +4,7 @@ import logger from '@utils/logger';
 import {
   CanonicalPerson,
   DirtyDatasets,
+  OiEnrichment,
   Report,
   SimulationRunOptions,
   SimulationRunSummary,
@@ -19,6 +20,7 @@ export type ArtifactName =
   | 'shopify-dirty.json'
   | 'upload-result.json'
   | 'oi-result.csv'
+  | 'oi-enrichment.json'
   | 'report.json'
   | 'report.csv';
 
@@ -136,6 +138,14 @@ export async function readOiResult(runId: string): Promise<Buffer | null> {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
     throw error;
   }
+}
+
+export async function loadOiEnrichment(runId: string): Promise<OiEnrichment | null> {
+  return readJson<OiEnrichment>(path.join(runDir(runId), 'oi-enrichment.json'));
+}
+
+export async function writeOiEnrichment(runId: string, enrichment: OiEnrichment): Promise<void> {
+  await writeJson(path.join(runDir(runId), 'oi-enrichment.json'), enrichment);
 }
 
 export async function writeReport(runId: string, report: Report, csv: string): Promise<void> {
