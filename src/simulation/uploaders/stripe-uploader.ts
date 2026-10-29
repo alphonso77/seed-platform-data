@@ -1,6 +1,5 @@
 import Stripe from 'stripe';
 import {
-  CANONICAL_ID_TAG,
   EnvironmentCheck,
   PlatformConfig,
   SEEDED_AT_TAG,
@@ -97,7 +96,6 @@ function buildCustomerParams(
       [SEEDED_TAG]: 'true',
       [SEEDED_AT_TAG]: seededAt,
       [SIMULATION_RUN_ID_TAG]: runId,
-      [CANONICAL_ID_TAG]: record.canonicalId,
       ...(record.company ? { company: record.company } : {}),
       ...(record.jobTitle ? { jobTitle: record.jobTitle } : {}),
     },

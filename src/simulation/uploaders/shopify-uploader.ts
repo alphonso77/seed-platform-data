@@ -1,7 +1,6 @@
 import { shopifyApi, LATEST_API_VERSION, Session } from '@shopify/shopify-api';
 import '@shopify/shopify-api/adapters/node';
 import {
-  CANONICAL_ID_TAG,
   EnvironmentCheck,
   PlatformConfig,
   SEEDED_AT_TAG,
@@ -144,7 +143,7 @@ function isPhoneInvalidError(message: string): boolean {
   return /"phone"\s*:\s*\[\s*"is invalid"/.test(message);
 }
 
-function buildCustomerBody(
+export function buildCustomerBody(
   record: DirtyContact,
   runId: string,
   seededAt: string,
@@ -154,7 +153,6 @@ function buildCustomerBody(
     SEEDED_TAG,
     `${SEEDED_AT_TAG}:${seededAt}`,
     `${SIMULATION_RUN_ID_TAG}:${runId}`,
-    `${CANONICAL_ID_TAG}:${record.canonicalId}`,
   ].join(',');
 
   const customer: Record<string, unknown> = {

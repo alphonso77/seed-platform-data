@@ -1,5 +1,5 @@
 import { expect } from 'chai';
-import { normalizeToE164 } from '../../../../src/simulation/uploaders/shopify-uploader';
+import { normalizeToE164, buildCustomerBody } from '../../../../src/simulation/uploaders/shopify-uploader';
 import { isShopifyThrottleError } from '../../../../src/utils/shopify-throttle';
 
 describe('utils/shopify-throttle isShopifyThrottleError', () => {
@@ -55,5 +55,29 @@ describe('simulation/uploaders/shopify normalizeToE164', () => {
 
   it('returns null for non-1-prefixed 11-digit numbers (we only validate US-style)', () => {
     expect(normalizeToE164('20123456789')).to.be.null;
+  });
+});
+
+describe('simulation/uploaders/shopify buildCustomerBody', () => {
+  it('tags the run but writes no answer-key value (FS-361)', () => {
+    const body = buildCustomerBody(
+      {
+        canonicalId: 'canon-xyz',
+        internalId: 'int-xyz',
+        tier: 'canonical',
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        email: 'ada@example.com',
+        phone: null,
+        company: null,
+        jobTitle: null,
+        address: null,
+      },
+      'run-9',
+      '2026-10-29T00:00:00.000Z',
+    );
+    expect(body.tags).to.include('simulation_run_id:run-9');
+    expect(JSON.stringify(body)).to.not.include('canon-xyz');
+    expect(JSON.stringify(body)).to.not.include('int-xyz');
   });
 });

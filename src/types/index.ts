@@ -86,8 +86,11 @@ export interface GeneratedOrder {
   notes: string;
 }
 
+// The only tags a seeded record carries: what cleanup needs. Never add an
+// answer-key value (canonical id, internal id): FratelliSoftware copies Stripe
+// metadata, HubSpot custom properties and Shopify tags into the Data Lake, so
+// FSOI could grade itself against its own answer key (FS-361). Grading joins
+// records to people through upload-result.json instead.
 export const SEEDED_TAG = 'seed_platform_seeded';
 export const SEEDED_AT_TAG = 'seed_platform_seeded_at';
 export const SIMULATION_RUN_ID_TAG = 'simulation_run_id';
-export const CANONICAL_ID_TAG = 'canonical_id';
-export const SIMULATION_INTERNAL_ID_TAG = 'simulation_internal_id';
