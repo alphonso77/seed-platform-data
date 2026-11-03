@@ -5,7 +5,6 @@ import { DirtyContact } from '../../../../src/simulation/types';
 import {
   SEEDED_TAG,
   SIMULATION_RUN_ID_TAG,
-  CANONICAL_ID_TAG,
 } from '../../../../src/types';
 
 function record(overrides: Partial<DirtyContact> = {}): DirtyContact {
@@ -44,7 +43,7 @@ function makeUploader(): { uploader: StripeUploader; stripe: StripeStub } {
 describe('StripeUploader.upload', () => {
   afterEach(() => sinon.restore());
 
-  it('stamps SEEDED_TAG, simulation_run_id, and canonical_id in metadata', async () => {
+  it('stamps SEEDED_TAG and simulation_run_id in metadata, and no answer-key value', async () => {
     const { uploader, stripe } = makeUploader();
     const create = sinon
       .stub(stripe.customers, 'create')
@@ -59,7 +58,9 @@ describe('StripeUploader.upload', () => {
     const params = create.firstCall.args[0];
     expect(params.metadata?.[SEEDED_TAG]).to.equal('true');
     expect(params.metadata?.[SIMULATION_RUN_ID_TAG]).to.equal('run-A');
-    expect(params.metadata?.[CANONICAL_ID_TAG]).to.equal('canon-1');
+    // FS-361: no answer-key values in the record.
+    expect(JSON.stringify(params)).to.not.include('canon-1');
+    expect(JSON.stringify(params)).to.not.include('int-1');
     expect(params.email).to.equal('ada@example.com');
     expect(params.phone).to.equal('(415) 555-1212');
   });

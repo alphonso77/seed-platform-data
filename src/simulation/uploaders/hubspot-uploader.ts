@@ -1,19 +1,21 @@
 import { Client } from '@hubspot/api-client';
 import {
-  CANONICAL_ID_TAG,
   EnvironmentCheck,
   PlatformConfig,
   SEEDED_AT_TAG,
   SEEDED_TAG,
-  SIMULATION_INTERNAL_ID_TAG,
   SIMULATION_RUN_ID_TAG,
 } from '@/types';
 import { DirtyContact, UploadMappingEntry } from '@/simulation/types';
 import { checkHubSpotEnvironment } from '@utils/safety';
 import logger from '@utils/logger';
-import { BaseUploader } from '@/simulation/uploaders/base-uploader';
+import { BaseUploader, promisePool } from '@/simulation/uploaders/base-uploader';
 
-const BATCH_SIZE = 100;
+// One contact per request, a few at a time (HubSpot allows 100 requests per
+// 10 s). The batch API doesn't promise to answer in input order, and matching
+// its results back would need a per-record tag, which FratelliSoftware copies
+// into the Data Lake (FS-361).
+const HUBSPOT_CONCURRENCY = 4;
 
 interface ContactInput {
   properties: Record<string, string>;
@@ -65,8 +67,6 @@ export class HubSpotUploader extends BaseUploader {
       { name: SEEDED_TAG, label: 'Seed Platform Seeded', type: 'string', fieldType: 'text' },
       { name: SEEDED_AT_TAG, label: 'Seed Platform Seeded At', type: 'string', fieldType: 'text' },
       { name: SIMULATION_RUN_ID_TAG, label: 'Simulation Run ID', type: 'string', fieldType: 'text' },
-      { name: CANONICAL_ID_TAG, label: 'Canonical ID', type: 'string', fieldType: 'text' },
-      { name: SIMULATION_INTERNAL_ID_TAG, label: 'Simulation Internal ID', type: 'string', fieldType: 'text' },
     ];
 
     for (const prop of propertyDefs) {
@@ -101,61 +101,31 @@ export class HubSpotUploader extends BaseUploader {
     const errors: string[] = [];
     const mappings: UploadMappingEntry[] = [];
 
-    const inputs = records.map((record) => ({
-      record,
-      input: buildContactInput(record, runId, seededAt),
-    }));
-
-    for (let i = 0; i < inputs.length; i += BATCH_SIZE) {
-      const slice = inputs.slice(i, i + BATCH_SIZE);
-      // Index slice inputs by internalId so we can match each response back
-      // unambiguously — HubSpot's batch create response is NOT guaranteed to
-      // preserve input order.
-      const sliceByInternalId = new Map(slice.map((s) => [s.record.internalId, s.record]));
+    let created = 0;
+    const outcomes = await promisePool(records, HUBSPOT_CONCURRENCY, async (record) => {
       try {
-        const response = await this.client.crm.contacts.batchApi.create({
-          inputs: slice.map((s) => s.input),
-        });
-        for (const result of response.results) {
-          const internalId = result.properties?.[SIMULATION_INTERNAL_ID_TAG];
-          const record = internalId ? sliceByInternalId.get(internalId) : undefined;
-          if (!record) {
-            errors.push(
-              `HubSpot contact (externalId ${result.id}): batch response missing or unmatched ${SIMULATION_INTERNAL_ID_TAG} — cannot map back to canonical`,
-            );
-            continue;
-          }
-          mappings.push({
-            canonicalId: record.canonicalId,
-            internalId: record.internalId,
-            platform: 'hubspot',
-            externalId: result.id,
-          });
-        }
-      } catch (batchError) {
-        logger.warn(
-          `[HubSpot simulation] batch create failed at offset ${i}, falling back to per-record: ${batchError instanceof Error ? batchError.message : String(batchError)}`,
-        );
-        for (const { record, input } of slice) {
-          try {
-            const result = await this.client.crm.contacts.basicApi.create(input);
-            mappings.push({
-              canonicalId: record.canonicalId,
-              internalId: record.internalId,
-              platform: 'hubspot',
-              externalId: result.id,
-            });
-          } catch (error) {
-            errors.push(
-              `HubSpot contact ${record.internalId}: ${error instanceof Error ? error.message : String(error)}`,
-            );
-          }
-        }
+        const result = await this.client.crm.contacts.basicApi.create(buildContactInput(record, runId, seededAt));
+        created++;
+        if (created % 100 === 0) logger.info(`[HubSpot simulation] contacts: ${created}/${records.length} created`);
+        return { ok: true as const, record, externalId: result.id };
+      } catch (error) {
+        return { ok: false as const, record, message: error instanceof Error ? error.message : String(error) };
       }
-      logger.info(
-        `[HubSpot simulation] contacts: ${mappings.length}/${inputs.length} created`,
-      );
+    });
+
+    for (const outcome of outcomes) {
+      if (outcome.ok) {
+        mappings.push({
+          canonicalId: outcome.record.canonicalId,
+          internalId: outcome.record.internalId,
+          platform: 'hubspot',
+          externalId: outcome.externalId,
+        });
+      } else {
+        errors.push(`HubSpot contact ${outcome.record.internalId}: ${outcome.message}`);
+      }
     }
+    logger.info(`[HubSpot simulation] contacts: ${mappings.length}/${records.length} created`);
 
     return { mappings, errors };
   }
@@ -166,8 +136,6 @@ function buildContactInput(record: DirtyContact, runId: string, seededAt: string
     [SEEDED_TAG]: 'true',
     [SEEDED_AT_TAG]: seededAt,
     [SIMULATION_RUN_ID_TAG]: runId,
-    [CANONICAL_ID_TAG]: record.canonicalId,
-    [SIMULATION_INTERNAL_ID_TAG]: record.internalId,
   };
   if (record.firstName) properties.firstname = record.firstName;
   if (record.lastName) properties.lastname = record.lastName;

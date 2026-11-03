@@ -35,7 +35,7 @@ For `under_merged`, `deferred_review` and `over_merged` canonicals, the report a
 
 - **`src/simulation/answer-key.ts`** — `generateAnswerKey()` builds the canonical persons.
 - **`src/simulation/csv-parser.ts`** — `parseOiResultCsv()` turns the uploaded OI CSV into `OiResultRow[]`.
-- **`src/simulation/uploaders/{stripe,hubspot,shopify}-uploader.ts`** — produce the upload mapping (canonicalId → internalId → externalId), persisted to `upload-result.json`.
+- **`src/simulation/uploaders/{stripe,hubspot,shopify}-uploader.ts`** — produce the upload mapping (canonicalId → internalId → externalId), persisted to `upload-result.json`. The mapping is the only place the answer key meets platform records: records carry the run id and seeded tags, never a canonical or internal id, because FratelliSoftware copies Stripe metadata, HubSpot custom properties and Shopify tags into the Data Lake (FS-361). Records seeded before this change still carry `canonical_id` until they are cleaned and seeded again. HubSpot contacts are created one per request (four at a time) since the batch API's answers can't be matched back without such a tag.
 - **`src/simulation/dirty.ts`** — `generateDirtyDatasets()` produces the per-platform fragmentation + duplication patterns the answer key gets exercised against. **HubSpot's duplicate emits a mutated email + matching phone** — that's the pattern that exposes cross-marker resolver bugs (resolver sees email_A→DNA-1, phone_X→DNA-2, and may silently pick one).
 
 ## Reading results: email domains are stronger evidence here than in production
